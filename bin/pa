@@ -226,7 +226,16 @@ case "${1:-}" in
     esac
     ;;
   init|doctor|uninstall)
-    die "pa $1: not implemented yet (see implementation plan Phase 3/5)" 1
+    sub="$1"; shift
+    wizard_lib="$(_pa_script_dir)/../lib/wizard.sh"
+    if [[ -f "$DEV_MARKER" ]]; then
+      _dev_path=$(cat "$DEV_MARKER")
+      [[ -f "$_dev_path/lib/wizard.sh" ]] && wizard_lib="$_dev_path/lib/wizard.sh"
+    fi
+    [[ -f "$wizard_lib" ]] || die "wizard lib not found at $wizard_lib" 1
+    # shellcheck source=../lib/wizard.sh
+    source "$wizard_lib"
+    "pa_${sub}" "$@"
     ;;
   -h|--help|help)
     sed -n '/^# pa/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
