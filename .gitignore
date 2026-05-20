@@ -1,0 +1,35 @@
+# Runtime state (user-side; never shipped)
+state/
+cache/
+logs/
+
+# User-owned learnings (template only ships as learnings.example.md)
+**/learnings.md
+!presets/*/learnings.example.md
+
+# Backups from migration script
+*.bak
+*.bak.*
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local-only dev artifacts
+.env
+.env.local

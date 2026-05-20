@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "claude-pa",
+  "description": "Tim Bartels' Claude Code helper plugins — currently hosts the claude-pa personal-assistant.",
+  "owner": {
+    "name": "Tim Bartels",
+    "url": "https://github.com/timbartels"
+  },
+  "plugins": [
+    {
+      "name": "claude-pa",
+      "source": ".",
+      "description": "Personal assistant for vault management, daily-note carry-over, multi-pane terminal orchestration, dashboard, and end-of-day wrap."
+    }
+  ]
+}
