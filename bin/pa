@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # pa — claude-pa launcher.
 #
-# Loads the claude-pa plugin into a Claude Code session. Supports a `dev` toggle
-# that swaps between the marketplace-installed plugin and a local dev checkout
-# (via `claude --plugin-dir`). The toggle persists across shells/reboots in a
-# marker file at $XDG_CONFIG_HOME/claude-pa/dev-path.
+# Loads the claude-pa plugin into a Claude Code session. Bare invocation
+# orchestrates the vault session (cd into $PA_VAULT, ensure dashboard pane,
+# tag the orchestrator pane, then exec claude with the personal-assistant
+# slash command — or resume same-day session via --continue).
+#
+# Supports a `dev` toggle that swaps between the marketplace-installed
+# plugin and a local dev checkout via `claude --plugin-dir`. The toggle
+# persists across shells/reboots in a marker file at
+# $XDG_CONFIG_HOME/claude-pa/dev-path.
 #
 # Usage:
-#   pa                       launch claude (dev plugin if `pa dev on`, marketplace otherwise)
+#   pa                       launch the vault session (dev plugin if `pa dev on`, marketplace otherwise)
 #   pa dev on [path]         enable dev mode; default path: ~/Projects/claude-pa
 #   pa dev off               disable dev mode (back to marketplace install)
 #   pa dev status            show current mode + active path
 #
-# Future subcommands (Phase 3/5 of the implementation plan):
+# Future subcommands (Phase 5 of the implementation plan):
 #   pa init                  interactive wizard
 #   pa doctor                health check
 #   pa uninstall             clean removal
@@ -22,6 +27,7 @@ set -euo pipefail
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-pa"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-pa"
 DEV_MARKER="$CONFIG_DIR/dev-path"
+SLASH_COMMAND="/claude-pa:personal-assistant"
 
 # Color helpers — gate on stdout TTY since user-facing output prints to stdout.
 # Diagnostics (die/note/warn) print to stderr but use the same gate for consistency.
@@ -69,6 +75,85 @@ _pa_rotate_snapshots() {
   ls -1t "$DATA_DIR"/.learnings.bak-* 2>/dev/null \
     | awk -v k="$keep" 'NR > k' \
     | xargs -r rm --
+}
+
+# Resolve the directory containing this script, following symlinks.
+# Supports the documented install pattern (`ln -s … ~/.local/bin/pa`).
+_pa_script_dir() {
+  local script="$0" target
+  while [[ -L "$script" ]]; do
+    target=$(readlink "$script")
+    if [[ "$target" = /* ]]; then
+      script="$target"
+    else
+      script="$(cd "$(dirname "$script")" && pwd)/$target"
+    fi
+  done
+  cd "$(dirname "$script")" && pwd
+}
+
+# Detect the active pane id for the configured (or autodetected) backend.
+# Mirrors the lookup in hooks/scripts/mark-main-pane.sh + lib/pa/state_update.py.
+_pa_active_pane() {
+  case "${PA_TERMINAL_BACKEND:-}" in
+    wezterm) printf '%s' "${WEZTERM_PANE:-}" ;;
+    tmux)    printf '%s' "${TMUX_PANE:-}" ;;
+    iterm2)  printf '%s' "${ITERM_SESSION_ID:-}" ;;
+    kitty)   printf '%s' "${KITTY_WINDOW_ID:-}" ;;
+    *)       printf '%s' "${TMUX_PANE:-${WEZTERM_PANE:-${ITERM_SESSION_ID:-${KITTY_WINDOW_ID:-}}}}" ;;
+  esac
+}
+
+# Source PA_CONFIG inline (best-effort — orchestration steps each handle
+# their own absence-of-config gracefully).
+_pa_load_config_inline() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/claude-pa/config.sh"
+  [[ -f "$cfg" ]] || return 1
+  # shellcheck disable=SC1090
+  source "$cfg"
+  return 0
+}
+
+# Run the vault-session orchestration: cd to vault, ensure dashboard pane,
+# tag this pane as the orchestrator, return 0 if same-day resume applies.
+# Sets globals: PA_VAULT_DIR, PA_RESUME (true|false).
+_pa_orchestrate_vault_session() {
+  local pa_sh="$1"
+
+  if ! _pa_load_config_inline; then
+    warn "no config at \$XDG_CONFIG_HOME/claude-pa/config.sh — launching without vault orchestration"
+    PA_VAULT_DIR=""
+    PA_RESUME=false
+    return 0
+  fi
+
+  PA_VAULT_DIR="${PA_VAULT:-}"
+  if [[ -z "$PA_VAULT_DIR" || ! -d "$PA_VAULT_DIR" ]]; then
+    warn "PA_VAULT is unset or not a directory — launching without vault orchestration"
+    PA_VAULT_DIR=""
+    PA_RESUME=false
+    return 0
+  fi
+
+  # Dashboard spawn is wezterm-gated inside pa.sh; on other backends it
+  # exits 0 with a message. Either way: best-effort, never fatal.
+  "$pa_sh" dashboard 0.5 >/dev/null 2>&1 || true
+
+  # Tag this pane as the orchestrator. Same pane-id detection as the hook.
+  local pane
+  pane=$(_pa_active_pane)
+  if [[ -n "$pane" ]]; then
+    "$pa_sh" focus "$pane" "${PA_MAIN_TITLE:-MAIN}" >/dev/null 2>&1 || true
+  fi
+
+  # Same-day resume check: skill writes session-touch --morning-done at
+  # the end of step 9. If it ran already today, `claude --continue` wins.
+  if "$pa_sh" session-resumable >/dev/null 2>&1; then
+    PA_RESUME=true
+  else
+    PA_RESUME=false
+  fi
+  return 0
 }
 
 dev_on() {
@@ -147,19 +232,48 @@ case "${1:-}" in
     sed -n '/^# pa/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   '')
+    # Pick the plugin install we will run against.
     if [[ -f "$DEV_MARKER" ]]; then
-      path=$(cat "$DEV_MARKER")
+      plugin_path=$(cat "$DEV_MARKER")
       # Re-validate on every launch — defense against marker tampering (TOCTOU)
       # and against the dev checkout being deleted/moved after `pa dev on`.
-      _pa_validate_plugin_dir "$path" \
-        || die "dev path invalid: $path — run \`pa dev off\` or \`pa dev on <path>\`" 2
-      # Re-resolve through the safe-path guard each launch.
-      _pa_resolve_safe "$path" >/dev/null \
-        || die "dev path failed safety check: $path" 2
-      exec claude --plugin-dir "$path"
+      _pa_validate_plugin_dir "$plugin_path" \
+        || die "dev path invalid: $plugin_path — run \`pa dev off\` or \`pa dev on <path>\`" 2
+      _pa_resolve_safe "$plugin_path" >/dev/null \
+        || die "dev path failed safety check: $plugin_path" 2
+      PA_SH="$plugin_path/bin/pa.sh"
+      claude_plugin_flag=( --plugin-dir "$plugin_path" )
     else
-      exec claude
+      # Marketplace install: this launcher lives at <plugin>/bin/pa, and pa.sh
+      # is its sibling. Resolve through symlinks so ~/.local/bin/pa → real
+      # path works.
+      script_dir=$(_pa_script_dir)
+      PA_SH="$script_dir/pa.sh"
+      claude_plugin_flag=()
     fi
+
+    if [[ ! -x "$PA_SH" ]]; then
+      die "pa.sh not found or not executable at $PA_SH" 1
+    fi
+
+    # Run vault-session pre-flight (cd $PA_VAULT, ensure dashboard pane,
+    # tag the orchestrator pane, decide resume vs full morning routine).
+    PA_VAULT_DIR=""
+    PA_RESUME=false
+    _pa_orchestrate_vault_session "$PA_SH"
+
+    # cd into the vault when we have one — keeps Claude's CWD predictable
+    # so the SessionStart vault-context hook can recognize this as the
+    # orchestrator session (it skips state writes for vault-cwd sessions).
+    if [[ -n "$PA_VAULT_DIR" ]]; then
+      cd "$PA_VAULT_DIR"
+    fi
+
+    if [[ "$PA_RESUME" == "true" ]]; then
+      note "resuming today's session (morning already done)"
+      exec claude ${claude_plugin_flag[@]+"${claude_plugin_flag[@]}"} --continue
+    fi
+    exec claude ${claude_plugin_flag[@]+"${claude_plugin_flag[@]}"} "$SLASH_COMMAND"
     ;;
   *)
     die "unknown subcommand: $1 (try \`pa help\`)" 2
