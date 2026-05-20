@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# pa — claude-pa launcher.
+#
+# Loads the claude-pa plugin into a Claude Code session. Supports a `dev` toggle
+# that swaps between the marketplace-installed plugin and a local dev checkout
+# (via `claude --plugin-dir`). The toggle persists across shells/reboots in a
+# marker file at $XDG_CONFIG_HOME/claude-pa/dev-path.
+#
+# Usage:
+#   pa                       launch claude (dev plugin if `pa dev on`, marketplace otherwise)
+#   pa dev on [path]         enable dev mode; default path: ~/Projects/claude-pa
+#   pa dev off               disable dev mode (back to marketplace install)
+#   pa dev status            show current mode + active path
+#
+# Future subcommands (Phase 3/5 of the implementation plan):
+#   pa init                  interactive wizard
+#   pa doctor                health check
+#   pa uninstall             clean removal
+
+set -euo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-pa"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-pa"
+DEV_MARKER="$CONFIG_DIR/dev-path"
+
+# Color helpers (respect NO_COLOR; only emit on TTY)
+if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+  RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
+else
+  RED=''; YELLOW=''; CYAN=''; RESET=''
+fi
+
+die() { local msg="$1" code="${2:-1}"; printf '%serror:%s %s\n' "$RED" "$RESET" "$msg" >&2; exit "$code"; }
+note() { printf '%snote:%s %s\n' "$CYAN" "$RESET" "$*" >&2; }
+warn() { printf '%swarning:%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+
+dev_on() {
+  local path="${1:-$HOME/Projects/claude-pa}"
+  [[ -d "$path" ]] || die "$path is not a directory" 2
+  [[ -f "$path/.claude-plugin/plugin.json" ]] \
+    || die "$path does not look like a claude-pa plugin (missing .claude-plugin/plugin.json)" 2
+
+  mkdir -p "$CONFIG_DIR"
+
+  # Snapshot learnings.md if present (only the irreplaceable file; state files are transient)
+  if [[ -f "$DATA_DIR/learnings.md" ]]; then
+    local ts; ts=$(date +%s)
+    cp "$DATA_DIR/learnings.md" "$DATA_DIR/.learnings.bak-$ts"
+    note "snapshot: $DATA_DIR/.learnings.bak-$ts"
+  fi
+
+  printf '%s\n' "$path" > "$DEV_MARKER"
+  printf 'dev mode %sON%s\n' "$CYAN" "$RESET"
+  printf 'plugin path: %s\n' "$path"
+  printf 'next `pa` launches: claude --plugin-dir %s\n' "$path"
+}
+
+dev_off() {
+  if [[ -f "$DEV_MARKER" ]]; then
+    rm "$DEV_MARKER"
+    printf 'dev mode %sOFF%s (marketplace install active)\n' "$CYAN" "$RESET"
+  else
+    printf 'dev mode already off\n'
+  fi
+}
+
+dev_status() {
+  if [[ -f "$DEV_MARKER" ]]; then
+    local path; path=$(cat "$DEV_MARKER")
+    printf 'mode: %sDEV%s\nplugin path: %s\n' "$CYAN" "$RESET" "$path"
+    [[ -d "$path" && -f "$path/.claude-plugin/plugin.json" ]] \
+      || warn "dev path no longer valid; run \`pa dev off\` or \`pa dev on <new-path>\`"
+  else
+    printf 'mode: production (marketplace install)\n'
+  fi
+}
+
+case "${1:-}" in
+  dev)
+    case "${2:-status}" in
+      on)     shift 2 || true; dev_on "${1:-}" ;;
+      off)    dev_off ;;
+      status) dev_status ;;
+      *)      die "usage: pa dev {on [path]|off|status}" 2 ;;
+    esac
+    ;;
+  init|doctor|uninstall)
+    die "pa $1: not implemented yet (see implementation plan Phase 3/5)" 1
+    ;;
+  -h|--help|help)
+    sed -n '/^# pa/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  '')
+    if [[ -f "$DEV_MARKER" ]]; then
+      path=$(cat "$DEV_MARKER")
+      [[ -d "$path" ]] || die "dev path missing: $path — run \`pa dev off\` or \`pa dev on <path>\`" 2
+      exec claude --plugin-dir "$path"
+    else
+      exec claude
+    fi
+    ;;
+  *)
+    die "unknown subcommand: $1 (try \`pa help\`)" 2
+    ;;
+esac
