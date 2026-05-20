@@ -23,8 +23,9 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-pa"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/claude-pa"
 DEV_MARKER="$CONFIG_DIR/dev-path"
 
-# Color helpers (respect NO_COLOR; only emit on TTY)
-if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+# Color helpers — gate on stdout TTY since user-facing output prints to stdout.
+# Diagnostics (die/note/warn) print to stderr but use the same gate for consistency.
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   RED=$'\033[31m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
 else
   RED=''; YELLOW=''; CYAN=''; RESET=''
@@ -34,22 +35,66 @@ die() { local msg="$1" code="${2:-1}"; printf '%serror:%s %s\n' "$RED" "$RESET" 
 note() { printf '%snote:%s %s\n' "$CYAN" "$RESET" "$*" >&2; }
 warn() { printf '%swarning:%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
 
-dev_on() {
-  local path="${1:-$HOME/Projects/claude-pa}"
-  [[ -d "$path" ]] || die "$path is not a directory" 2
+# Resolve a user-supplied path to its canonical form and reject anything
+# outside $HOME (the only place a dev checkout legitimately lives). Set
+# PA_ALLOW_EXTERNAL=1 to override (e.g. shared system installs).
+_pa_resolve_safe() {
+  local path="$1" resolved
+  if command -v realpath >/dev/null 2>&1; then
+    resolved=$(realpath -- "$path" 2>/dev/null) || resolved=""
+  else
+    # macOS fallback: portable canonicalization via cd
+    resolved=$(cd -- "$path" 2>/dev/null && pwd -P) || resolved=""
+  fi
+  [[ -n "$resolved" ]] || { printf 'invalid path: %s\n' "$path" >&2; return 1; }
+  if [[ "${PA_ALLOW_EXTERNAL:-0}" != "1" ]] && [[ "$resolved" != "$HOME"/* ]]; then
+    printf 'path outside $HOME: %s (set PA_ALLOW_EXTERNAL=1 to override)\n' "$resolved" >&2
+    return 1
+  fi
+  printf '%s\n' "$resolved"
+}
+
+# Validate that a directory is a claude-pa plugin install (used by dev_on and
+# by the exec path to re-check on every launch — TOCTOU defense).
+_pa_validate_plugin_dir() {
+  local path="$1"
+  [[ -d "$path" ]] || { printf 'not a directory: %s\n' "$path" >&2; return 1; }
   [[ -f "$path/.claude-plugin/plugin.json" ]] \
-    || die "$path does not look like a claude-pa plugin (missing .claude-plugin/plugin.json)" 2
+    || { printf 'not a claude-pa plugin (missing .claude-plugin/plugin.json): %s\n' "$path" >&2; return 1; }
+}
 
-  mkdir -p "$CONFIG_DIR"
+# Snapshot rotation: keep the N most recent .learnings.bak-* files.
+_pa_rotate_snapshots() {
+  local keep=5
+  ls -1t "$DATA_DIR"/.learnings.bak-* 2>/dev/null \
+    | awk -v k="$keep" 'NR > k' \
+    | xargs -r rm --
+}
 
-  # Snapshot learnings.md if present (only the irreplaceable file; state files are transient)
+dev_on() {
+  local input_path="${1:-$HOME/Projects/claude-pa}" path
+  path=$(_pa_resolve_safe "$input_path") || die "rejected: $input_path" 2
+  _pa_validate_plugin_dir "$path" || die "rejected: $path" 2
+
+  install -d -m 700 -- "$CONFIG_DIR"
+
+  # Snapshot learnings.md if present (only irreplaceable file; state is transient).
   if [[ -f "$DATA_DIR/learnings.md" ]]; then
+    install -d -m 700 -- "$DATA_DIR"
     local ts; ts=$(date +%s)
-    cp "$DATA_DIR/learnings.md" "$DATA_DIR/.learnings.bak-$ts"
+    install -m 600 -- "$DATA_DIR/learnings.md" "$DATA_DIR/.learnings.bak-$ts"
     note "snapshot: $DATA_DIR/.learnings.bak-$ts"
+    _pa_rotate_snapshots
   fi
 
-  printf '%s\n' "$path" > "$DEV_MARKER"
+  # Write marker atomically; umask 077 enforces 600 perms on creation.
+  # Resolved (canonical) path persisted, not the user-supplied string.
+  (
+    umask 077
+    printf '%s\n' "$path" > "$DEV_MARKER.tmp"
+  )
+  mv -f -- "$DEV_MARKER.tmp" "$DEV_MARKER"
+
   printf 'dev mode %sON%s\n' "$CYAN" "$RESET"
   printf 'plugin path: %s\n' "$path"
   printf 'next `pa` launches: claude --plugin-dir %s\n' "$path"
@@ -65,10 +110,21 @@ dev_off() {
 }
 
 dev_status() {
+  if [[ "${1:-}" == "--json" ]]; then
+    if [[ -f "$DEV_MARKER" ]]; then
+      local path; path=$(cat "$DEV_MARKER")
+      local valid=false
+      _pa_validate_plugin_dir "$path" >/dev/null 2>&1 && valid=true
+      printf '{"mode":"dev","path":"%s","valid":%s}\n' "$path" "$valid"
+    else
+      printf '{"mode":"production","path":null,"valid":true}\n'
+    fi
+    return 0
+  fi
   if [[ -f "$DEV_MARKER" ]]; then
     local path; path=$(cat "$DEV_MARKER")
     printf 'mode: %sDEV%s\nplugin path: %s\n' "$CYAN" "$RESET" "$path"
-    [[ -d "$path" && -f "$path/.claude-plugin/plugin.json" ]] \
+    _pa_validate_plugin_dir "$path" >/dev/null 2>&1 \
       || warn "dev path no longer valid; run \`pa dev off\` or \`pa dev on <new-path>\`"
   else
     printf 'mode: production (marketplace install)\n'
@@ -80,8 +136,8 @@ case "${1:-}" in
     case "${2:-status}" in
       on)     shift 2 || true; dev_on "${1:-}" ;;
       off)    dev_off ;;
-      status) dev_status ;;
-      *)      die "usage: pa dev {on [path]|off|status}" 2 ;;
+      status) shift 2 || true; dev_status "${1:-}" ;;
+      *)      die "usage: pa dev {on [path]|off|status [--json]}" 2 ;;
     esac
     ;;
   init|doctor|uninstall)
@@ -93,7 +149,13 @@ case "${1:-}" in
   '')
     if [[ -f "$DEV_MARKER" ]]; then
       path=$(cat "$DEV_MARKER")
-      [[ -d "$path" ]] || die "dev path missing: $path — run \`pa dev off\` or \`pa dev on <path>\`" 2
+      # Re-validate on every launch — defense against marker tampering (TOCTOU)
+      # and against the dev checkout being deleted/moved after `pa dev on`.
+      _pa_validate_plugin_dir "$path" \
+        || die "dev path invalid: $path — run \`pa dev off\` or \`pa dev on <path>\`" 2
+      # Re-resolve through the safe-path guard each launch.
+      _pa_resolve_safe "$path" >/dev/null \
+        || die "dev path failed safety check: $path" 2
       exec claude --plugin-dir "$path"
     else
       exec claude
