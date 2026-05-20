@@ -1,7 +1,15 @@
-# Runtime state (user-side; never shipped)
+# Runtime state (user-side; never shipped) — recursive to catch nested test dirs
+**/state/
+**/cache/
+**/logs/
 state/
 cache/
 logs/
+
+# Dev-mode marker (only ever exists under $XDG_CONFIG_HOME, but belt-and-suspenders
+# in case a contributor runs `pa dev on` from inside the repo during testing)
+dev-path
+*.snapshot
 
 # User-owned learnings (template only ships as learnings.example.md)
 **/learnings.md
