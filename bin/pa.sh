@@ -114,6 +114,10 @@ case "$cmd" in
     terminal_set_title "$pane" "$repo" >/dev/null 2>&1 || true
     terminal_activate "$pane" >/dev/null 2>&1 || true
     window_raise "$repo" >/dev/null 2>&1 || true
+    # Re-tile windows so the new pane lands in the user's slot (e.g.
+    # macOS `relayout` script, or any equivalent in the user's $PATH).
+    # Soft-fail when no tiler is installed.
+    command -v relayout >/dev/null && relayout >/dev/null 2>&1 || true
     echo "$pane"
     ;;
 
@@ -510,6 +514,7 @@ PYEOF
     terminal_set_title "$new_pane" "$repo" >/dev/null 2>&1 || true
     terminal_activate "$new_pane" >/dev/null 2>&1 || true
     window_raise "$repo" >/dev/null 2>&1 || true
+    command -v relayout >/dev/null && relayout >/dev/null 2>&1 || true
     echo "$new_pane"
     ;;
 
