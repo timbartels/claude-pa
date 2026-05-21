@@ -137,3 +137,22 @@ teardown() {
   [ "$status" -eq 0 ]
   [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
 }
+
+@test "pa init auto-detect: upward walk from CWD finds .obsidian ancestor" {
+  # Build a fake vault under $TMPHOME and run pa init from a subdir of it.
+  # PA_INIT_CWD_OVERRIDE simulates the user `cd`-ing into the vault before
+  # invoking pa init — the upward walker should match before the broad
+  # scan even starts.
+  mkdir -p "$TMPHOME/Notes/MyVault/.obsidian" "$TMPHOME/Notes/MyVault/Daily" \
+           "$TMPHOME/Notes/MyVault/sub/dir"
+  run env PA_INIT_HOMEDIR_OVERRIDE="$TMPHOME" \
+          PA_INIT_CWD_OVERRIDE="$TMPHOME/Notes/MyVault/sub/dir" \
+          PA_INIT_NO_TCC_PROMPT=1 \
+          PA_ALLOW_EXTERNAL=1 \
+    "$PA_ROOT/bin/pa" init --non-interactive \
+      --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+      --set "PA_TERMINAL_BACKEND=tmux"
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
+  grep -q "PA_VAULT=.*Notes/MyVault" "$XDG_CONFIG_HOME/claude-pa/config.sh"
+}

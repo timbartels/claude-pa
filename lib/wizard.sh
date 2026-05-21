@@ -128,16 +128,47 @@ _pa_init_homedir() {
   printf '%s' "${PA_INIT_HOMEDIR_OVERRIDE:-$HOME}"
 }
 
+# Walk upward from CWD looking for a `.obsidian/` marker — the common
+# case where the user already cd'd into their vault before running
+# `pa init`. Stops at $HOME or filesystem root. Returns 0 + path on
+# hit, 1 on miss. Cheap (a few stats) vs the iCloud + ~/Documents +
+# ~/Obsidian broad scan that follows.
+#
+# PA_INIT_CWD_OVERRIDE lets bats redirect the start point into a temp
+# directory without `cd`-ing the test runner.
+_pa_walk_upward_for_vault() {
+  local home cwd dir canonical
+  home=$(_pa_init_homedir)
+  cwd="${PA_INIT_CWD_OVERRIDE:-$PWD}"
+  dir=$(cd "$cwd" 2>/dev/null && pwd) || return 1
+  while [[ -n "$dir" && "$dir" != "/" && "$dir" != "$home" ]]; do
+    if [[ -d "$dir/.obsidian" ]]; then
+      canonical=$(_pa_resolve_safe "$dir" 2>/dev/null) || return 1
+      printf '%s\n' "$canonical"
+      return 0
+    fi
+    dir=$(dirname "$dir")
+  done
+  return 1
+}
+
 # Scan the conventional Obsidian vault locations for any subdir containing
 # a `.obsidian/` marker. Prints zero, one, or many absolute paths (one per
-# line). Symlinks resolved via realpath so a single iCloud vault doesn't
-# appear twice when the user also symlinks it under ~/Obsidian. Every
-# candidate flows through _pa_resolve_safe (inherited from bin/pa) so a
-# rogue symlink escaping $HOME is rejected.
+# line). The upward walk above runs first; only when that misses do we
+# fall into the broader scan. Symlinks resolved via realpath so a single
+# iCloud vault doesn't appear twice when the user also symlinks it under
+# ~/Obsidian. Every candidate flows through _pa_resolve_safe (inherited
+# from bin/pa) so a rogue symlink escaping $HOME is rejected.
 #
 # Honours PA_INIT_NO_TCC_PROMPT=1 to short-circuit the iCloud scan in CI
 # (where macOS TCC prompts would block the test runner).
 _pa_detect_vault() {
+  # Upward walk first — cheap, common case (user `cd $VAULT && pa init`).
+  local hit
+  if hit=$(_pa_walk_upward_for_vault 2>/dev/null); then
+    [[ -n "$hit" ]] && { printf '%s\n' "$hit"; return 0; }
+  fi
+
   local home roots root candidate canonical
   home=$(_pa_init_homedir)
   roots=()
