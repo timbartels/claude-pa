@@ -6,7 +6,13 @@
 # Inherits from bin/pa: die / note / warn / _pa_resolve_safe /
 # _pa_validate_plugin_dir / RED / YELLOW / CYAN / RESET / CONFIG_DIR /
 # DATA_DIR. Does not depend on lib/paths.sh (which requires $PA_CONFIG to
-# already exist — exactly what `pa init` is creating).
+# already exist — exactly what `pa init` is creating). Does load
+# lib/_backend_detect.sh because that helper is pre-config-safe (reads
+# env only) and is the single source of truth for backend detection,
+# shared with paths.sh's runtime resolution and pa_doctor's health check.
+
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/_backend_detect.sh"
 
 # ─── Shared constants ──────────────────────────────────────────────────────
 
@@ -129,6 +135,313 @@ JSON
 
 # ─── pa init ───────────────────────────────────────────────────────────────
 
+# Resolve the homedir the auto-detect scanners walk. PA_INIT_HOMEDIR_OVERRIDE
+# lets bats redirect the scan into a temp directory without touching $HOME.
+_pa_init_homedir() {
+  printf '%s' "${PA_INIT_HOMEDIR_OVERRIDE:-$HOME}"
+}
+
+# Scan the conventional Obsidian vault locations for any subdir containing
+# a `.obsidian/` marker. Prints zero, one, or many absolute paths (one per
+# line). Symlinks resolved via realpath so a single iCloud vault doesn't
+# appear twice when the user also symlinks it under ~/Obsidian. Every
+# candidate flows through _pa_resolve_safe (inherited from bin/pa) so a
+# rogue symlink escaping $HOME is rejected.
+#
+# Honours PA_INIT_NO_TCC_PROMPT=1 to short-circuit the iCloud scan in CI
+# (where macOS TCC prompts would block the test runner).
+_pa_detect_vault() {
+  local home roots root candidate canonical
+  home=$(_pa_init_homedir)
+  roots=()
+
+  # iCloud first — most common Obsidian setup on macOS. Skip if the env
+  # short-circuit is set (CI) or the directory simply doesn't exist
+  # (non-macOS, or no Obsidian iCloud sync configured).
+  local icloud="$home/Library/Mobile Documents/iCloud~md~obsidian/Documents"
+  if [[ -d "$icloud" && "${PA_INIT_NO_TCC_PROMPT:-0}" != "1" ]]; then
+    note "scanning iCloud for Obsidian vaults — macOS may prompt for permission"
+    roots+=("$icloud")
+  fi
+
+  [[ -d "$home/Documents" ]] && roots+=("$home/Documents")
+  [[ -d "$home/Obsidian" ]] && roots+=("$home/Obsidian")
+
+  declare -A seen=()
+  for root in "${roots[@]+"${roots[@]}"}"; do
+    # /bin/ls because the user may have shell-aliased `ls` and the alias
+    # has been observed to fail on iCloud-backed paths.
+    while IFS= read -r candidate; do
+      [[ -d "$root/$candidate/.obsidian" ]] || continue
+      canonical=$(_pa_resolve_safe "$root/$candidate" 2>/dev/null) || continue
+      # Dedup by canonical path — iCloud + ~/Obsidian symlinks to the same
+      # vault are the common case.
+      [[ -n "${seen[$canonical]:-}" ]] && continue
+      seen[$canonical]=1
+      printf '%s\n' "$canonical"
+    done < <(/bin/ls -1 "$root" 2>/dev/null || true)
+  done
+}
+
+# Walk a short fixed list of conventional projects-dir locations, return
+# the first one that exists. Output passes through _pa_resolve_safe so a
+# symlinked candidate escaping $HOME is rejected.
+_pa_detect_projects_dir() {
+  local home candidate canonical
+  home=$(_pa_init_homedir)
+  for candidate in Projects projects code dev src; do
+    if [[ -d "$home/$candidate" ]]; then
+      canonical=$(_pa_resolve_safe "$home/$candidate" 2>/dev/null) || continue
+      printf '%s\n' "$canonical"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Thin wrapper around lib/_backend_detect.sh:_pa_resolve_backend. Lives
+# here so callers in this file (pa_init, pa_doctor) can reference a
+# wizard-local name and the actual logic stays in one place.
+_pa_detect_backend() {
+  _pa_resolve_backend
+}
+
+# Render the confirm block — one labeled assignment per line in the fixed
+# source taxonomy (--set / env / preset:NAME / shell / default /
+# auto-detect). User answers y / n only — no per-field edit DSL.
+#
+# Reads (globally): _pa_val_<KEY> resolved values and _pa_src_<KEY>
+# source-label strings, both written by the key-walk loop in pa_init.
+# Returns: 0 on accept, 1 on reject. Other exit codes propagate from
+# `read` failures (EOF → die).
+_pa_confirm_block() {
+  local key var src_var
+  printf '\n%sdetected configuration:%s\n' "$CYAN" "$RESET" >&2
+  for key in "${_PA_ALL_KEYS[@]}"; do
+    var="_pa_val_$key"
+    src_var="_pa_src_$key"
+    printf '  %-30s = %-40s  %s\n' \
+      "$key" \
+      "\"${!var:-}\"" \
+      "${!src_var:-(default)}" >&2
+  done
+  printf '\n' >&2
+
+  printf 'write config? [Y/n]: ' >&2
+  local choice
+  if ! IFS= read -r choice; then
+    die "pa init: stdin closed" 1
+  fi
+  case "${choice:-y}" in
+    y|Y|yes) return 0 ;;
+    *)
+      printf '\n%sno config written.%s re-run with:\n' "$YELLOW" "$RESET" >&2
+      printf '  pa init --wizard               # walk every field\n' >&2
+      printf '  pa init --set PA_VAULT=...     # override single field\n' >&2
+      return 1
+      ;;
+  esac
+}
+
+# Acquire a flock on $CONFIG_DIR/.init.lock so two pa init runs can't
+# race on the same config file. Falls back to a mkdir-as-lock when
+# /usr/bin/flock isn't available (macOS without coreutils). The lock is
+# released by the EXIT trap set up in pa_init.
+_pa_acquire_init_lock() {
+  install -d -m 700 -- "$CONFIG_DIR"
+  local lock="$CONFIG_DIR/.init.lock"
+  if command -v flock >/dev/null 2>&1; then
+    exec {_PA_INIT_LOCK_FD}>"$lock"
+    if ! flock -n "$_PA_INIT_LOCK_FD"; then
+      warn "another pa init in progress (holding $lock)"
+      return 1
+    fi
+    return 0
+  fi
+  # mkdir-as-lock fallback. Atomic on POSIX filesystems.
+  if ! mkdir "$lock" 2>/dev/null; then
+    warn "another pa init in progress (holding $lock)"
+    return 1
+  fi
+  _PA_INIT_LOCK_DIR="$lock"
+  return 0
+}
+
+_pa_release_init_lock() {
+  if [[ -n "${_PA_INIT_LOCK_FD:-}" ]]; then
+    eval "exec ${_PA_INIT_LOCK_FD}>&-"
+    unset _PA_INIT_LOCK_FD
+  fi
+  if [[ -n "${_PA_INIT_LOCK_DIR:-}" && -d "$_PA_INIT_LOCK_DIR" ]]; then
+    rmdir "$_PA_INIT_LOCK_DIR" 2>/dev/null || true
+    unset _PA_INIT_LOCK_DIR
+  fi
+}
+
+# Write the resolved key-value pairs to $CONFIG_DIR/config.sh atomically.
+# Same-directory mktemp so the final mv is a rename (atomic on POSIX);
+# chmod 600 before mv so the file is never world-readable. Caller is
+# expected to have set the EXIT trap that calls _pa_init_cleanup.
+_pa_atomic_write_config() {
+  local config_file="$CONFIG_DIR/config.sh"
+  install -d -m 700 -- "$CONFIG_DIR"
+  install -d -m 700 -- "$DATA_DIR" "$DATA_DIR/state" "$DATA_DIR/cache" "$DATA_DIR/logs"
+
+  _PA_INIT_TMPCFG=$(mktemp "$CONFIG_DIR/.config.sh.XXXXXX")
+  {
+    printf '# ~/.config/claude-pa/config.sh — generated by `pa init` on %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '# Edit by hand or re-run `pa init` to regenerate.\n\n'
+    local key var raw escaped
+    for key in "${_PA_ALL_KEYS[@]}"; do
+      var="_pa_val_$key"
+      raw="${!var:-}"
+      escaped="${raw//\\/\\\\}"
+      escaped="${escaped//\"/\\\"}"
+      printf '%s="%s"\n' "$key" "$escaped"
+    done
+  } > "$_PA_INIT_TMPCFG"
+  chmod 600 "$_PA_INIT_TMPCFG"
+  mv -- "$_PA_INIT_TMPCFG" "$config_file"
+  unset _PA_INIT_TMPCFG
+}
+
+# Cleanup hook for the EXIT/INT/TERM trap set by pa_init. Removes any
+# in-flight tmpfile and releases the init lock.
+_pa_init_cleanup() {
+  if [[ -n "${_PA_INIT_TMPCFG:-}" && -f "${_PA_INIT_TMPCFG}" ]]; then
+    rm -f -- "$_PA_INIT_TMPCFG"
+  fi
+  _pa_release_init_lock
+}
+
+# Post-write hook that offers to symlink ~/.local/bin/pa at the plugin's
+# bin/pa. The launcher is the user's entry point; the marketplace install
+# drops it into the plugin cache only, so a fresh install otherwise leaves
+# `pa` unreachable from the user's $PATH.
+#
+# Args:
+#   $1  plugin_root         absolute path to the plugin install
+#   $2  force_symlink       1 to repoint an existing symlink, 0 to refuse
+#   $3  non_interactive     1 skips the offer (no prompts, print a note)
+#
+# Returns 0 always — the offer is best-effort; failures are warnings, not
+# fatal. Refuses to clobber a regular file regardless of $force_symlink
+# (rename-and-replace is too destructive for a flag).
+_pa_offer_launcher_symlink() {
+  local plugin_root="$1" force="$2" non_interactive="$3"
+  local plugin_pa="$plugin_root/bin/pa"
+  local target="$HOME/.local/bin/pa"
+
+  # State 1: pa already on $PATH and resolves to us — no-op.
+  local current
+  if current=$(command -v pa 2>/dev/null); then
+    local current_real plugin_real
+    current_real=$(_pa_resolve_safe "$current" 2>/dev/null) || current_real="$current"
+    plugin_real=$(_pa_resolve_safe "$plugin_pa" 2>/dev/null) || plugin_real="$plugin_pa"
+    if [[ "$current_real" == "$plugin_real" ]]; then
+      return 0
+    fi
+    # State 2: pa resolves elsewhere — warn but never shadow.
+    warn "\`pa\` already on \$PATH at $current (not the plugin's bin/pa)"
+    warn "leaving alone — remove or repoint manually if you want this install to win"
+    return 0
+  fi
+
+  # State 3: pa not on $PATH at all. Offer to create the symlink.
+
+  # Nix detection: if ~/.local/bin is already a symlink into /nix/store,
+  # the directory is home-manager-managed. Don't fight that — print a
+  # note and return.
+  if [[ -L "$HOME/.local/bin" ]]; then
+    local link_target
+    link_target=$(readlink "$HOME/.local/bin")
+    if [[ "$link_target" == /nix/store/* ]]; then
+      note "~/.local/bin is Nix-managed — install pa via home-manager instead"
+      return 0
+    fi
+  fi
+  if [[ -L "$target" ]]; then
+    local t
+    t=$(readlink "$target" 2>/dev/null)
+    if [[ "$t" == /nix/store/* ]]; then
+      note "~/.local/bin/pa is Nix-managed — install via home-manager instead"
+      return 0
+    fi
+  fi
+
+  # If target exists as a regular file: refuse to clobber. Files at that
+  # path are the user's intentional tool; print a manual command.
+  if [[ -e "$target" && ! -L "$target" ]]; then
+    warn "~/.local/bin/pa is a regular file — refusing to clobber"
+    printf '  to install manually: ln -s %q ~/.local/bin/pa\n' "$plugin_pa" >&2
+    return 0
+  fi
+
+  # If target exists as a symlink pointing elsewhere: --force-symlink
+  # repoints; otherwise print the manual command.
+  if [[ -L "$target" ]]; then
+    local t
+    t=$(readlink "$target" 2>/dev/null)
+    if [[ "$t" == "$plugin_pa" ]]; then
+      return 0  # already correct
+    fi
+    if [[ "$force" -eq 1 ]]; then
+      ln -sfn -- "$plugin_pa" "$target" \
+        || { warn "could not repoint $target"; return 0; }
+      note "repointed ~/.local/bin/pa -> $plugin_pa"
+    else
+      warn "~/.local/bin/pa is a symlink to $t"
+      printf '  to repoint: pa init --force-symlink (or: ln -sfn %q ~/.local/bin/pa)\n' "$plugin_pa" >&2
+      return 0
+    fi
+  else
+    # Target does not exist. Offer to create it.
+    if [[ "$non_interactive" -eq 1 ]]; then
+      note "skipping launcher symlink offer (--non-interactive)"
+      note "to enable \`pa\` on \$PATH: ln -s $plugin_pa ~/.local/bin/pa"
+      return 0
+    fi
+    printf '\n%sinstall ~/.local/bin/pa -> %s ?%s [Y/n]: ' \
+      "$CYAN" "$plugin_pa" "$RESET" >&2
+    local ans
+    if ! IFS= read -r ans; then
+      return 0
+    fi
+    case "${ans:-y}" in
+      n|N|no) note "skipped — run \`pa init --force-symlink\` or symlink manually later"; return 0 ;;
+    esac
+
+    install -d -m 700 -- "$HOME/.local/bin"
+    # Same-dir tmp + mv -n closes the TOCTOU window described in the
+    # plan's deepen-plan security findings.
+    local tmp
+    tmp=$(mktemp -u "$HOME/.local/bin/.pa.XXXXXX")
+    if ! ln -s -- "$plugin_pa" "$tmp"; then
+      warn "could not create ~/.local/bin/pa (ln failed)"
+      return 0
+    fi
+    if ! mv -n -- "$tmp" "$target"; then
+      rm -f -- "$tmp"
+      warn "could not install ~/.local/bin/pa (target appeared during install)"
+      return 0
+    fi
+    note "installed ~/.local/bin/pa -> $plugin_pa"
+  fi
+
+  # Check $PATH membership — never auto-edit shell rc files. Print the
+  # exact export line if ~/.local/bin is missing from $PATH.
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *)
+      printf '\n%s~/.local/bin is not on $PATH.%s add to your shell rc:\n' \
+        "$YELLOW" "$RESET" >&2
+      printf '  export PATH="$HOME/.local/bin:$PATH"\n' >&2
+      ;;
+  esac
+  return 0
+}
+
 # Read a value with default, validating with the provided validator function.
 _pa_prompt() {
   local var="$1" prompt="$2" default="$3"
@@ -230,28 +543,49 @@ _pa_substitute_skill() {
 }
 
 pa_init() {
-  local non_interactive=0 print_settings=0 preset_override="" set_pairs=()
+  local non_interactive=0 print_settings=0 wizard=0 force_symlink=0
+  local preset_override="" set_pairs=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --non-interactive) non_interactive=1; shift ;;
       --print-settings)  print_settings=1; shift ;;
+      --wizard)          wizard=1; shift ;;
+      --force-symlink)   force_symlink=1; shift ;;
       --preset)          preset_override="${2:-}"; shift 2 ;;
       --preset=*)        preset_override="${1#--preset=}"; shift ;;
       --set)             set_pairs+=("${2:-}"); shift 2 ;;
       --set=*)           set_pairs+=("${1#--set=}"); shift ;;
       -h|--help)
         cat >&2 <<'USAGE'
-usage: pa init [--non-interactive] [--preset <name>] [--set KEY=VALUE]... [--print-settings]
+usage: pa init [<mode-flag>] [--preset <name>] [--set KEY=VALUE]...
+               [--non-interactive] [--print-settings] [--force-symlink]
 
-  --non-interactive   Read every value from $PA_INIT_<KEY> env vars and
-                      --set flags; never prompt. Exits non-zero on missing
-                      required vars. Required for CI smoke tests.
-  --preset <name>     Preload defaults from presets/<name>/.
-  --set KEY=VALUE     Override a single value (repeatable). Wins over the
-                      preset's default.
-  --print-settings    Emit only the settings.json allow-rules snippet
-                      (does not write the config file). Useful for piping
-                      into `jq merge`.
+  Modes (mutually exclusive except --wizard + --preset):
+    (default)         Auto-detect vault + projects-dir + backend,
+                      confirm, write. Implicitly interactive.
+    --wizard          Walk every field with the default chain.
+    --preset <name>   Preset-only path. NAME validated against
+                      presets/<name>/. Combine with --wizard to
+                      override individual fields interactively.
+
+  Modifiers:
+    --set KEY=VALUE   Override a single value (repeatable).
+    --non-interactive Read every value from $PA_INIT_<KEY> + --set;
+                      auto-promoted when stdin is not a TTY.
+    --print-settings  Emit settings.json snippet only; write no
+                      config. Still runs full detection — auto-detect
+                      failure exits 2.
+    --force-symlink   Re-point an existing ~/.local/bin/pa symlink at
+                      the plugin's bin/pa. Refuses to clobber regular
+                      files regardless of flag.
+
+  Value resolution order (highest precedence wins):
+    1. --set KEY=VALUE        (cmdline)
+    2. $PA_INIT_<KEY>         (env)
+    3. preset (--preset NAME, or "default" in auto-detect mode)
+    4. value in current shell ($PA_VAULT etc. already exported)
+    5. auto-detect (default mode only)
+    6. presets/default/config.env (final fallback)
 
 Side effect: writes the resolved preset's SKILL.md (with {{PA_*}}
 placeholders substituted) into the plugin's
@@ -265,117 +599,271 @@ USAGE
     esac
   done
 
+  # TTY auto-promotion — matches gh auth login. Stdin not a TTY ⇒ we
+  # cannot prompt, so behave like --non-interactive even without the flag.
+  if [[ ! -t 0 ]]; then
+    non_interactive=1
+  fi
+
   local plugin_root
   plugin_root=$(_pa_plugin_root_for_wizard)
   [[ -d "$plugin_root" ]] || die "pa init: plugin root not found at $plugin_root" 1
 
+  # Validate --preset NAME before any other work. The chooser path
+  # (interactive --wizard with no explicit preset) does its own
+  # availability listing below.
+  if [[ -n "$preset_override" ]]; then
+    if [[ ! -f "$plugin_root/presets/$preset_override/config.env" ]]; then
+      printf 'pa init: preset %q not found at %s/presets/%s\n' \
+        "$preset_override" "$plugin_root" "$preset_override" >&2
+      printf 'available presets:\n' >&2
+      _pa_list_presets "$plugin_root" | sed 's/^/  /' >&2
+      return 2
+    fi
+  fi
+
+  # Mode selection — flags collapse onto three named modes for the rest
+  # of the function. --wizard + --preset is allowed (preset preloads,
+  # wizard prompts every field). Bare --preset is preset-only mode;
+  # bare (no flags) is auto-detect mode.
+  local mode
+  if [[ $wizard -eq 1 ]]; then
+    mode=wizard
+  elif [[ -n "$preset_override" ]]; then
+    mode=preset
+  else
+    mode=auto
+  fi
+
+  # Acquire init lock + register cleanup trap. Lock release + tmpfile
+  # cleanup happen via _pa_init_cleanup. SIGINT exits 130 (POSIX
+  # convention) with no partial write.
+  if ! _pa_acquire_init_lock; then
+    return 1
+  fi
+  trap '_pa_init_cleanup' EXIT
+  trap '_pa_init_cleanup; exit 130' INT TERM
+
   local config_file="$CONFIG_DIR/config.sh"
 
   # Existing-config detection — interactive only. CI / --non-interactive
-  # always overwrites; user opted in by passing the flag.
+  # always overwrites; user opted in by passing the flag. --wizard does
+  # NOT bypass this prompt (idempotence preserved across modes).
   if [[ -f "$config_file" && $non_interactive -eq 0 && $print_settings -eq 0 ]]; then
     note "existing config at $config_file"
-    printf 'choose: [k]eep + tweak / [r]eplace from preset / [c]ancel [k]: ' >&2
+    printf 'choose: [k]eep + tweak / [r]eplace / [c]ancel [k]: ' >&2
     local choice
-    IFS= read -r choice
+    if ! IFS= read -r choice; then
+      die "pa init: stdin closed" 1
+    fi
     case "${choice:-k}" in
       c|C) note "cancelled"; return 0 ;;
-      r|R) : ;;  # fall through; preset selection below handles it
+      r|R) : ;;
       *)
-        # "keep + tweak" loads existing config as the starting point.
         # shellcheck disable=SC1090
         source "$config_file"
         ;;
     esac
   fi
 
-  # ─── Preset selection ────────────────────────────────────────────────
+  # Preset selection per mode.
   local preset=""
-  if [[ -n "$preset_override" ]]; then
-    preset="$preset_override"
-  elif [[ $non_interactive -eq 0 ]]; then
-    note "available presets:"
-    local i=0 names=()
-    while IFS= read -r p; do
-      i=$((i + 1))
-      names+=("$p")
-      printf '  %d) %s\n' "$i" "$p" >&2
-    done < <(_pa_list_presets "$plugin_root")
-    i=$((i + 1))
-    printf '  %d) start fresh (no preset)\n' "$i" >&2
+  case "$mode" in
+    auto)
+      preset="default"
+      ;;
+    preset)
+      preset="$preset_override"
+      ;;
+    wizard)
+      if [[ -n "$preset_override" ]]; then
+        preset="$preset_override"
+      elif [[ $non_interactive -eq 0 ]]; then
+        # Interactive --wizard with no preset — keep today's numbered
+        # chooser so existing users see no UX change in this branch.
+        note "available presets:"
+        local i=0 names=() p
+        while IFS= read -r p; do
+          i=$((i + 1))
+          names+=("$p")
+          printf '  %d) %s\n' "$i" "$p" >&2
+        done < <(_pa_list_presets "$plugin_root")
+        i=$((i + 1))
+        printf '  %d) start fresh (no preset)\n' "$i" >&2
 
-    printf 'pick [1]: ' >&2
-    local pick
-    IFS= read -r pick
-    pick="${pick:-1}"
-    if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick > 0 && pick <= ${#names[@]} )); then
-      preset="${names[$((pick - 1))]}"
-    fi
-  fi
+        printf 'pick [1]: ' >&2
+        local pick
+        IFS= read -r pick
+        pick="${pick:-1}"
+        if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick > 0 && pick <= ${#names[@]} )); then
+          preset="${names[$((pick - 1))]}"
+        fi
+      fi
+      ;;
+  esac
 
   _pa_load_preset "$plugin_root" "$preset"
 
-  # ─── Walk through each key ───────────────────────────────────────────
-  # Resolved values stored as globals _pa_val_<KEY> (bash 3.2 friendly).
-  local key val pair env_key
+  # Walk each key. Resolved values stored as _pa_val_<KEY>, sources as
+  # _pa_src_<KEY>. Both are bash 3.2 friendly (indirect expansion).
+  local key val src pair env_key candidates_buf candidate i pick
   for key in "${_PA_ALL_KEYS[@]}"; do
-    # Precedence: --set > $PA_INIT_<KEY> env > preset > current shell > built-in default
     val=""
+    src=""
+
+    # 1. --set
     for pair in "${set_pairs[@]+"${set_pairs[@]}"}"; do
       if [[ "$pair" =~ ^${key}=(.*)$ ]]; then
-        val="${BASH_REMATCH[1]}"
-        break
+        val="${BASH_REMATCH[1]}"; src="(--set)"; break
       fi
     done
+
+    # 2. $PA_INIT_<KEY> env
     if [[ -z "$val" ]]; then
       env_key="PA_INIT_$key"
-      val="${!env_key:-}"
-    fi
-    if [[ -z "$val" ]]; then
-      val=$(_pa_preset_value_for "$key")
-    fi
-    if [[ -z "$val" ]]; then
-      val="${!key:-}"
-    fi
-    if [[ -z "$val" ]]; then
-      val=$(_pa_default_for "$key")
+      if [[ -n "${!env_key:-}" ]]; then
+        val="${!env_key}"; src="(env)"
+      fi
     fi
 
-    if [[ $non_interactive -eq 0 ]]; then
+    # 3. preset
+    if [[ -z "$val" ]]; then
+      val=$(_pa_preset_value_for "$key")
+      [[ -n "$val" ]] && src="(preset:$preset)"
+    fi
+
+    # 4. current shell
+    if [[ -z "$val" ]]; then
+      val="${!key:-}"
+      [[ -n "$val" ]] && src="(shell)"
+    fi
+
+    # 5. auto-detect (default mode only, for the three keys we can detect)
+    if [[ -z "$val" && "$mode" == "auto" ]]; then
+      case "$key" in
+        PA_VAULT)
+          candidates_buf=()
+          while IFS= read -r candidate; do
+            [[ -n "$candidate" ]] && candidates_buf+=("$candidate")
+          done < <(_pa_detect_vault)
+          case "${#candidates_buf[@]}" in
+            0) ;;
+            1) val="${candidates_buf[0]}"; src="(auto-detect)" ;;
+            *)
+              if [[ $non_interactive -eq 1 ]]; then
+                : # leave val empty — required-key check will fail explicitly
+              else
+                printf '\n%smultiple vaults detected:%s\n' "$CYAN" "$RESET" >&2
+                i=0
+                for candidate in "${candidates_buf[@]}"; do
+                  i=$((i+1))
+                  printf '  %d) %s\n' "$i" "$candidate" >&2
+                done
+                printf 'pick [1]: ' >&2
+                if ! IFS= read -r pick; then
+                  die "pa init: stdin closed" 1
+                fi
+                pick="${pick:-1}"
+                if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick > 0 && pick <= ${#candidates_buf[@]} )); then
+                  val="${candidates_buf[$((pick-1))]}"; src="(auto-detect)"
+                fi
+              fi
+              ;;
+          esac
+          ;;
+        PA_PROJECTS_DIR)
+          if val=$(_pa_detect_projects_dir 2>/dev/null); then
+            src="(auto-detect)"
+          else
+            val=""
+          fi
+          ;;
+        PA_TERMINAL_BACKEND)
+          val=$(_pa_detect_backend); src="(auto-detect)"
+          ;;
+      esac
+    fi
+
+    # 6. wizard-mode prompts every field
+    if [[ "$mode" == "wizard" && $non_interactive -eq 0 ]]; then
       case "$key" in
         PA_VAULT|PA_PROJECTS_DIR)
           val=$(_pa_prompt "$key" "$key (absolute path)" "$val" _pa_validate_path)
           ;;
         *)
           val=$(_pa_prompt "$key" "$key" "$val")
-          if ! _pa_safe_value "$val"; then
-            warn "$key contains a forbidden shell metacharacter — re-prompting"
-            val=$(_pa_prompt "$key" "$key" "$val")
-          fi
+          ;;
+      esac
+      [[ -z "$src" ]] && src="(prompted)"
+    fi
+
+    # 7. auto-mode inline prompt when still empty (required keys only)
+    if [[ "$mode" == "auto" && $non_interactive -eq 0 && -z "$val" ]]; then
+      case "$key" in
+        PA_VAULT|PA_PROJECTS_DIR)
+          val=$(_pa_prompt "$key" "$key (absolute path)" "" _pa_validate_path)
+          src="(prompted)"
           ;;
       esac
     fi
+
     eval "_pa_val_$key=\$val"
+    eval "_pa_src_$key=\$src"
   done
 
-  # ─── Required-var validation ─────────────────────────────────────────
+  # Required-key check — fail loudly under --non-interactive when
+  # auto-detect could not resolve and no --set provided.
   for key in "${_PA_REQUIRED_KEYS[@]}"; do
     local var="_pa_val_$key"
     if [[ -z "${!var:-}" ]]; then
-      die "pa init: $key is required but unset (pass via --set or \$PA_INIT_$key env)" 2
+      die "pa init: $key not detected and no --set value provided — pass --set $key=<path>" 2
     fi
     if [[ ! -d "${!var}" ]]; then
       die "pa init: $key=${!var} is not a directory" 2
     fi
   done
 
-  # ─── Export so the substitution step + helpers can read by name ──────
+  # Auto-mode confirm block — user reviews labelled-source values, y/n.
+  if [[ "$mode" == "auto" && $non_interactive -eq 0 && $print_settings -eq 0 ]]; then
+    if ! _pa_confirm_block; then
+      return 0
+    fi
+  fi
+
+  # Pipe every resolved value through pa.paths.validate_assignments
+  # regardless of mode. Closes the --non-interactive validation-bypass
+  # gap flagged by the deepen-plan security review.
+  #
+  # Wrap each value in double quotes — the strict parser's bare-char
+  # class excludes spaces, pipes, em-dashes, etc., so any non-trivial
+  # value (vault titles with Unicode, daily-template paths with spaces,
+  # spawn templates with pipes) must be quoted. Values that contain a
+  # literal " or \ are rejected (correctly) by the parser since the
+  # strict config format can't represent them anyway.
+  local validate_input="" validate_stderr
+  for key in "${_PA_ALL_KEYS[@]}"; do
+    local vv="_pa_val_$key" sv="_pa_src_$key"
+    [[ -z "${!vv:-}" ]] && continue
+    validate_input+="${key}=\"${!vv}\"	# ${!sv:-(default)}"$'\n'
+  done
+  validate_stderr=$(mktemp)
+  if ! printf '%s' "$validate_input" \
+       | PYTHONPATH="$plugin_root/lib" python3 -m pa.paths validate-assignments \
+         >/dev/null 2>"$validate_stderr"; then
+    warn "validation failed:"
+    cat "$validate_stderr" >&2
+    rm -f "$validate_stderr"
+    die "pa init: refusing to write invalid config" 2
+  fi
+  rm -f "$validate_stderr"
+
+  # Export resolved values so the SKILL.md substitution can read by name.
   for key in "${_PA_ALL_KEYS[@]}"; do
     local var="_pa_val_$key"
     eval "export $key=\"\${$var}\""
   done
 
-  # ─── Settings-snippet-only mode ──────────────────────────────────────
+  # --print-settings short-circuits before the write.
   if [[ $print_settings -eq 1 ]]; then
     _pa_emit_settings_snippet \
       "${PA_TERMINAL_BACKEND:-auto}" \
@@ -385,38 +873,16 @@ USAGE
     return 0
   fi
 
-  # ─── Write config + preset marker ────────────────────────────────────
-  install -d -m 700 -- "$CONFIG_DIR"
-  install -d -m 700 -- "$DATA_DIR" "$DATA_DIR/state" "$DATA_DIR/cache" "$DATA_DIR/logs"
-
-  local tmp_cfg
-  tmp_cfg=$(mktemp)
-  {
-    printf '# ~/.config/claude-pa/config.sh — generated by `pa init` on %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '# Edit by hand or re-run `pa init` to regenerate.\n\n'
-    local key var raw escaped
-    for key in "${_PA_ALL_KEYS[@]}"; do
-      var="_pa_val_$key"
-      raw="${!var}"
-      # Escape backslash and double-quote, then wrap in double quotes.
-      # `printf %q` would be more general but bash 3.2's implementation
-      # mangles multi-byte UTF-8 — middle-dot, em-dash, etc. Values were
-      # already passed through _pa_safe_value, which rejects $(...) and
-      # backticks, so plain double-quoted output is safe.
-      escaped="${raw//\\/\\\\}"
-      escaped="${escaped//\"/\\\"}"
-      printf '%s="%s"\n' "$key" "$escaped"
-    done
-  } > "$tmp_cfg"
-  install -m 600 "$tmp_cfg" "$config_file"
-  rm -f "$tmp_cfg"
+  # Atomic write — see _pa_atomic_write_config for the rename dance.
+  _pa_atomic_write_config
 
   if [[ -n "$preset" ]]; then
     printf '%s\n' "$preset" > "$CONFIG_DIR/preset"
     chmod 600 "$CONFIG_DIR/preset"
   fi
 
-  # ─── Substitute SKILL.md placeholders into the plugin's skill file ───
+  # SKILL.md substitution — non-fatal because the config is the source
+  # of truth; SKILL.md regenerates on next `pa init`.
   local skill_src skill_dst
   if [[ -n "$preset" && -f "$plugin_root/presets/$preset/SKILL.md" ]]; then
     skill_src="$plugin_root/presets/$preset/SKILL.md"
@@ -425,9 +891,15 @@ USAGE
   fi
   skill_dst="$plugin_root/skills/personal-assistant/SKILL.md"
   if [[ "$skill_src" != "$skill_dst" ]]; then
-    cp "$skill_src" "$skill_dst"
+    cp "$skill_src" "$skill_dst" 2>/dev/null \
+      || warn "SKILL.md copy from $skill_src failed — config still written"
   fi
-  _pa_substitute_skill "$skill_dst"
+  _pa_substitute_skill "$skill_dst" 2>/dev/null \
+    || warn "SKILL.md substitution failed — config still written"
+
+  # Offer to install ~/.local/bin/pa launcher symlink (post-write — by
+  # this point the config is durable). Skipped under --non-interactive.
+  _pa_offer_launcher_symlink "$plugin_root" "$force_symlink" "$non_interactive"
 
   note "wrote $config_file"
   [[ -n "$preset" ]] && note "preset: $preset (recorded at $CONFIG_DIR/preset)"
@@ -562,12 +1034,7 @@ USAGE
   plugin_root=$(_pa_plugin_root_for_wizard)
   local backend="${PA_TERMINAL_BACKEND:-auto}"
   if [[ "$backend" == "auto" ]]; then
-    if [[ -n "${TMUX:-}" ]]; then backend=tmux
-    elif [[ "${TERM_PROGRAM:-}" == "WezTerm" ]]; then backend=wezterm
-    elif [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then backend=iterm2
-    elif [[ -n "${KITTY_WINDOW_ID:-}" ]]; then backend=kitty
-    else backend=tmux
-    fi
+    backend=$(_pa_resolve_backend)
   fi
   local backend_lib="$plugin_root/lib/terminal/$backend.sh"
   if [[ -f "$backend_lib" ]]; then

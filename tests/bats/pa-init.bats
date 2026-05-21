@@ -8,6 +8,14 @@ setup() {
   export XDG_CONFIG_HOME="$TMPHOME/xdg-config"
   export XDG_DATA_HOME="$TMPHOME/xdg-data"
   mkdir -p "$TMPHOME/vault" "$TMPHOME/projects"
+  # Unset PA_* env that may leak from a developer's parent shell so the
+  # XDG_CONFIG_HOME we just set actually wins inside pa init + paths.sh.
+  unset PA_CONFIG PA_DATA_DIR PA_STATE_DIR PA_CACHE_DIR PA_LOGS_DIR \
+    PA_VAULT PA_PROJECTS_DIR PA_TERMINAL_BACKEND PA_MAIN_TITLE \
+    PA_DAILY_DIR PA_DAILY_TEMPLATE_PATH PA_WORK_SECTION PA_PERSONAL_SECTION \
+    PA_FEATURE_NOTE_DIR PA_STATUS_VALUES PA_STATUS_SHIPPED \
+    PA_SPAWN_PROMPT_TEMPLATE PA_DASHBOARD_INTERVAL PA_DEBUG \
+    _PA_PATHS_LOADED
 }
 
 teardown() {

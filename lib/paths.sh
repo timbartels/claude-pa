@@ -67,21 +67,13 @@ _pa_require_dir() {
 _pa_require_dir PA_VAULT "${PA_VAULT:-}"
 _pa_require_dir PA_PROJECTS_DIR "${PA_PROJECTS_DIR:-}"
 
-# Auto-detect terminal backend when the user left it on `auto`. Pin order:
-# tmux wins if we're inside it (because everything else delegates anyway),
-# then named terminal env vars, then tmux as universal fallback.
+# Auto-detect terminal backend when the user left it on `auto`. Detection
+# logic lives in lib/_backend_detect.sh so the wizard + doctor + this
+# runtime path share one implementation.
 if [[ "${PA_TERMINAL_BACKEND:-auto}" == "auto" ]]; then
-  if [[ -n "${TMUX:-}" ]]; then
-    PA_TERMINAL_BACKEND="tmux"
-  elif [[ "${TERM_PROGRAM:-}" == "WezTerm" ]]; then
-    PA_TERMINAL_BACKEND="wezterm"
-  elif [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
-    PA_TERMINAL_BACKEND="iterm2"
-  elif [[ -n "${KITTY_WINDOW_ID:-}" ]]; then
-    PA_TERMINAL_BACKEND="kitty"
-  else
-    PA_TERMINAL_BACKEND="tmux"
-  fi
+  # shellcheck disable=SC1091
+  source "$(dirname "${BASH_SOURCE[0]}")/_backend_detect.sh"
+  PA_TERMINAL_BACKEND=$(_pa_resolve_backend)
 fi
 
 case "$PA_TERMINAL_BACKEND" in
