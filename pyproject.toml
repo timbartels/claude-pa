@@ -1,0 +1,45 @@
+[project]
+name = "claude-pa"
+version = "0.1.0"
+description = "Personal-assistant Claude Code plugin — Python lib for hooks and dashboard."
+requires-python = ">=3.10"
+authors = [{ name = "Tim Bartels" }]
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests/pytest"]
+pythonpath = ["lib"]
+addopts = ["-q", "--strict-markers"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["lib"]
+extend-exclude = ["lib/pa/dashboard_render.py"]  # 1432 LOC port; clean in stages
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes
+  "I",        # isort
+  "B",        # bugbear
+  "UP",       # pyupgrade
+  "RUF",      # ruff
+  "SIM",      # simplify
+  "PTH",      # use pathlib
+  "RET",      # return statements
+  "TCH",      # type-checking imports
+]
+ignore = [
+  "E501",     # long lines (we hand-format prose docstrings)
+  "RUF001",   # ambiguous unicode (we use em-dash and middle-dot in user-visible strings)
+  "RUF002",
+  "RUF003",
+  "PTH109",   # os.getcwd → Path.cwd — cosmetic
+  "PTH111",   # os.path.expanduser → Path.expanduser — cosmetic
+  "SIM105",   # contextlib.suppress — try/except/pass is clearer for one-liners
+  "TC003",    # type-checking imports — already paying for from __future__ import annotations
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401", "F811"]  # fixtures pollute namespace, fine in tests

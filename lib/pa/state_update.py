@@ -21,7 +21,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from pa.paths import Config, ConfigError, load_config
+from pa.paths import ConfigError, load_config
 
 MAX_EVENTS = 20
 MAX_PROMPT_LEN = 240

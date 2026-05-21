@@ -90,3 +90,33 @@ teardown() {
   [ "$status" -eq 0 ]
   terminal_kill "$pane"
 }
+
+@test "terminal_capture returns buffer for a live pane" {
+  pane=$(terminal_spawn /tmp "printf hello-bats-capture; sleep 30")
+  sleep 0.3
+  run terminal_capture "$pane"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hello-bats-capture"* ]]
+  terminal_kill "$pane"
+}
+
+@test "terminal_send to a gone pane exits 3" {
+  pane=$(terminal_spawn /tmp "sleep 30")
+  terminal_kill "$pane"
+  run terminal_send "$pane" "x"
+  [ "$status" -eq 3 ]
+}
+
+@test "terminal_set_title on a gone pane exits 3" {
+  pane=$(terminal_spawn /tmp "sleep 30")
+  terminal_kill "$pane"
+  run terminal_set_title "$pane" "should-fail"
+  [ "$status" -eq 3 ]
+}
+
+@test "terminal_activate on a gone pane exits 3" {
+  pane=$(terminal_spawn /tmp "sleep 30")
+  terminal_kill "$pane"
+  run terminal_activate "$pane"
+  [ "$status" -eq 3 ]
+}

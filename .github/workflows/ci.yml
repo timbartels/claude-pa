@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: shellcheck + ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck (SC2086 + SC2046 as errors)
+        run: |
+          shopt -s globstar nullglob
+          # SC2148 silenced for source-only library files (no shebang
+          # because they're meant to be sourced, not executed).
+          # SC1090/SC1091 silenced because we source via dynamic paths.
+          shellcheck -S error -e SC1090,SC1091,SC2148 \
+            bin/pa bin/pa.sh \
+            hooks/scripts/*.sh \
+            lib/paths.sh lib/wizard.sh \
+            lib/terminal/*.sh lib/window-raise/*.sh \
+            scripts/*.sh tests/ci/*.sh
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: install ruff
+        run: pip install ruff
+      - name: ruff
+        run: ruff check lib/ tests/
+
+  python:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: install pytest
+        run: pip install pytest
+      - name: pytest
+        run: pytest tests/pytest -q
+
+  manifest:
+    name: manifest + preset validators
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: validate-manifest
+        run: python3 tests/ci/validate-manifest.py
+      - name: validate-preset --all
+        run: tests/ci/validate-preset.sh --all
+
+  bash:
+    name: bats + smoke
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install bash 4+ + tmux + bats (macOS)
+        if: runner.os == 'macOS'
+        run: brew install bash tmux bats-core
+      - name: install tmux + bats (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux bats
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: bats — tmux backend
+        run: bats tests/bats/terminal-tmux.bats
+      - name: bats — wizard
+        run: bats tests/bats/pa-init.bats tests/bats/pa-doctor.bats
+      - name: end-to-end smoke
+        run: scripts/smoke-test.sh

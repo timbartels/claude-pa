@@ -25,11 +25,11 @@ import shlex
 import subprocess
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from pa.paths import Config, ConfigError, load_config
-
 
 # ─── Tool implementations ──────────────────────────────────────────────────
 
@@ -249,7 +249,7 @@ def _handle(cfg: Config, msg: dict) -> dict | None:
             return _error(req_id, -32602, f"bad arguments for {name}: {exc}")
         except (ValueError, FileNotFoundError, OSError) as exc:
             return _error(req_id, -32000, str(exc))
-        except Exception:  # noqa: BLE001 - surface unexpected errors as JSON-RPC errors
+        except Exception:
             return _error(req_id, -32000, "internal tool error", data=traceback.format_exc())
         # Tool outputs are wrapped per MCP spec.
         return _result(
@@ -288,7 +288,7 @@ def main() -> None:
             continue
         try:
             reply = _handle(cfg, msg)
-        except Exception:  # noqa: BLE001
+        except Exception:
             reply = _error(msg.get("id"), -32000, "internal error", data=traceback.format_exc())
         if reply is not None:
             _send(reply)

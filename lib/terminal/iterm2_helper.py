@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 def _require_iterm2():
     """Import iterm2 lazily so this module is importable without the dep."""
     try:
-        import iterm2  # noqa: WPS433  # runtime import is intentional
+        import iterm2  # runtime import is intentional
         return iterm2
     except ImportError:
         sys.stderr.write(
