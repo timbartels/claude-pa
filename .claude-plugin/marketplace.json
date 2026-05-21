@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "claude-pa",
-      "source": ".",
+      "source": "./",
       "description": "Personal assistant for vault management, daily-note carry-over, multi-pane terminal orchestration, dashboard, and end-of-day wrap."
     }
   ]
