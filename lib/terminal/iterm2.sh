@@ -74,6 +74,7 @@ terminal_activate() {
 
 terminal_set_title() {
   local pane="$1" tag="$2"
+  [[ "$tag" == \[PA:*\] ]] || tag="[PA:${tag}]"
   _pa_iterm2_ensure || return 2
   python3 "$_PA_ITERM2_HELPER" set_title "$pane" "$tag"
 }

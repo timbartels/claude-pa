@@ -76,6 +76,7 @@ terminal_activate() {
 
 terminal_set_title() {
   local pane="$1" tag="$2"
+  [[ "$tag" == \[PA:*\] ]] || tag="[PA:${tag}]"
   _pa_tmux_pane_exists "$pane" || return $?
   # Rename the window containing the pane; tmux has no per-pane title.
   tmux rename-window -t "$pane" -- "$tag"

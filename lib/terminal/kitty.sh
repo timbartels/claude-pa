@@ -100,6 +100,7 @@ terminal_activate() {
 
 terminal_set_title() {
   local pane="$1" tag="$2"
+  [[ "$tag" == \[PA:*\] ]] || tag="[PA:${tag}]"
   _pa_kitty_pane_exists "$pane" || return $?
   # Tab title is the user-visible tag for window groups; window title
   # changes flicker. Set both for safety.

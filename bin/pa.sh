@@ -79,6 +79,13 @@ case "$cmd" in
       echo "usage: pa.sh focus <pane-id> [<title-substring>]" >&2
       exit 2
     fi
+    # Tag tab title FIRST so window_raise has a unique substring to match
+    # against (set_title wraps as [PA:$tag]). Required when focusing a
+    # pane that wasn't spawned via pa.sh — e.g. a pane attached after
+    # restart, or one whose title was reset by another tool.
+    if [[ -n "$tag" ]]; then
+      terminal_set_title "$pane" "$tag" >/dev/null 2>&1 || true
+    fi
     terminal_activate "$pane" || { echo "activate failed on $pane" >&2; exit 1; }
     if [[ -n "$tag" ]]; then
       window_raise "$tag" || echo "window_raise: no window matched '$tag'" >&2

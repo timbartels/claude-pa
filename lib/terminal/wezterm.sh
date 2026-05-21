@@ -77,6 +77,9 @@ terminal_activate() {
 
 terminal_set_title() {
   local pane="$1" tag="$2"
+  # Prefix with [PA:...] so window_raise substring-matching is unambiguous
+  # against non-claude-pa terminal windows. Idempotent: re-wrapping is fine.
+  [[ "$tag" == \[PA:*\] ]] || tag="[PA:${tag}]"
   _pa_wezterm_pane_exists "$pane" || return $?
   # set-tab-title applies to the tab containing the pane; wezterm has no
   # per-pane title separate from the tab.
