@@ -11,11 +11,13 @@
   "license": "MIT",
   "userConfig": {
     "PA_VAULT": {
+      "title": "Vault path",
       "description": "Path to your Obsidian-style vault root (e.g., ~/Obsidian/MyVault)",
       "type": "string",
       "required": true
     },
     "PA_PROJECTS_DIR": {
+      "title": "Projects directory",
       "description": "Path to your code projects directory (e.g., ~/Projects)",
       "type": "string",
       "default": "~/Projects",
