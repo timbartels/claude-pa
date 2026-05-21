@@ -8,13 +8,30 @@
 setup() {
   source "${BATS_TEST_DIRNAME}/../../lib/terminal/tmux.sh"
   export PA_TEST_SESSION="pa-test-$$"
+  # Headless CI (GHA Ubuntu) doesn't have a writable XDG_RUNTIME_DIR by
+  # default — tmux fails to create its socket and every subsequent test
+  # hits "backend unavailable". Force tmux into a writable tmpdir we own,
+  # and unset TMUX so we never accidentally nest into an outer session.
+  export TMUX_TMPDIR="${TMUX_TMPDIR:-${TMPHOME:-${RUNNER_TEMP:-/tmp}}/tmux-bats-$$}"
+  mkdir -p "$TMUX_TMPDIR"
+  chmod 700 "$TMUX_TMPDIR"
+  unset TMUX
   # Ensure a tmux server exists with a known session for predictable state.
-  tmux new-session -d -s "$PA_TEST_SESSION" 2>/dev/null || true
+  # Don't swallow the error — if tmux can't start, every downstream test
+  # will fail anyway and the actual diagnostic is more useful than 13×
+  # "backend unavailable" lines.
+  tmux new-session -d -s "$PA_TEST_SESSION"
 }
 
 teardown() {
   # Kill the test session and any panes we spawned. Other sessions untouched.
   tmux kill-session -t "$PA_TEST_SESSION" 2>/dev/null || true
+  # Also kill the server itself so subsequent tests start clean and the
+  # TMUX_TMPDIR can be removed without leaving orphan sockets.
+  tmux kill-server 2>/dev/null || true
+  if [[ -n "${TMUX_TMPDIR:-}" && -d "$TMUX_TMPDIR" && "$TMUX_TMPDIR" == *"tmux-bats-$$"* ]]; then
+    rm -rf "$TMUX_TMPDIR"
+  fi
 }
 
 @test "terminal_health prints version and exits 0" {
@@ -78,9 +95,11 @@ teardown() {
   pane=$(terminal_spawn /tmp "sleep 30")
   run terminal_set_title "$pane" "pa-bats-tag"
   [ "$status" -eq 0 ]
-  # Confirm via tmux directly
+  # Confirm via tmux directly. terminal_set_title wraps the raw tag as
+  # `[PA:<tag>]` (see lib/terminal/tmux.sh:79) so the window-raise
+  # backend can recognise PA-owned panes; assert the wrapped form.
   win_name=$(tmux display-message -p -t "$pane" '#{window_name}')
-  [ "$win_name" = "pa-bats-tag" ]
+  [ "$win_name" = "[PA:pa-bats-tag]" ]
   terminal_kill "$pane"
 }
 
