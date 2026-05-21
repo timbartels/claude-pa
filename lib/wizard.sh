@@ -435,8 +435,31 @@ USAGE
 
 # ─── pa doctor ─────────────────────────────────────────────────────────────
 
+# Buffer for --json output mode. Each check appends one entry; the JSON
+# emit happens once at the end.
+_PA_DOCTOR_JSON=0
+_PA_DOCTOR_CHECKS=()
+
+# Escape a string for inclusion in a JSON value. Bash 3.2 compatible.
+_pa_json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/\\r}"
+  printf '%s' "$s"
+}
+
 _pa_check() {
   local label="$1" status="$2" detail="${3:-}"
+  if [[ "$_PA_DOCTOR_JSON" -eq 1 ]]; then
+    local lbl det
+    lbl=$(_pa_json_escape "$label")
+    det=$(_pa_json_escape "$detail")
+    _PA_DOCTOR_CHECKS+=("{\"label\":\"$lbl\",\"status\":\"$status\",\"detail\":\"$det\"}")
+    return 0
+  fi
   case "$status" in
     OK)   printf '  %s✓%s %s%s\n' "$(_pa_green)" "$RESET" "$label" "${detail:+ — $detail}" ;;
     WARN) printf '  %s~%s %s%s\n' "$YELLOW" "$RESET" "$label" "${detail:+ — $detail}" ;;
@@ -450,16 +473,21 @@ _pa_green() {
 
 pa_doctor() {
   local verbose=0
+  _PA_DOCTOR_JSON=0
+  _PA_DOCTOR_CHECKS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -v|--verbose) verbose=1; shift ;;
+      --json)       _PA_DOCTOR_JSON=1; shift ;;
       -h|--help)
         cat >&2 <<'USAGE'
-usage: pa doctor [--verbose]
+usage: pa doctor [--verbose] [--json]
 
 Checks the claude-pa install: CC version, config file, terminal backend,
 required paths, dependencies, and settings.json allow rules. Exits 0 if
 everything is green, 1 if any check fails (warnings still pass).
+
+--json emits a structured payload: {"ok": bool, "checks": [...]}.
 USAGE
         return 0
         ;;
@@ -469,7 +497,9 @@ USAGE
 
   local fails=0
 
-  printf '%spa doctor%s\n' "$CYAN" "$RESET"
+  if [[ "$_PA_DOCTOR_JSON" -ne 1 ]]; then
+    printf '%spa doctor%s\n' "$CYAN" "$RESET"
+  fi
 
   # 1. Claude Code version >= 2.1.141
   if command -v claude >/dev/null 2>&1; then
@@ -512,6 +542,10 @@ USAGE
   else
     _pa_check "config.sh present + parseable" FAIL "$config_file missing — run \`pa init\`"
     fails=$((fails + 1))
+    if [[ "$_PA_DOCTOR_JSON" -eq 1 ]]; then
+      local joined; joined=$(IFS=,; printf '%s' "${_PA_DOCTOR_CHECKS[*]}")
+      printf '{"ok":false,"fails":%d,"checks":[%s]}\n' "$fails" "$joined"
+    fi
     return 1
   fi
 
@@ -619,6 +653,15 @@ USAGE
     _pa_check "settings.json allow rule for pa.sh" OK
   else
     _pa_check "settings.json allow rule for pa.sh" WARN "not detected (run \`pa init --print-settings\` for the snippet)"
+  fi
+
+  # ─── JSON mode emits structured payload + exits early ────────────────
+  if [[ "$_PA_DOCTOR_JSON" -eq 1 ]]; then
+    local joined ok=true
+    if (( fails > 0 )); then ok=false; fi
+    joined=$(IFS=,; printf '%s' "${_PA_DOCTOR_CHECKS[*]}")
+    printf '{"ok":%s,"fails":%d,"checks":[%s]}\n' "$ok" "$fails" "$joined"
+    if (( fails == 0 )); then return 0; else return 1; fi
   fi
 
   # ─── Verbose dump ────────────────────────────────────────────────────

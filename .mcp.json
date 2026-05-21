@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "claude-pa": {
+      "command": "python3",
+      "args": ["-m", "pa.mcp_server"],
+      "env": {
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/lib"
+      }
+    }
+  }
+}

@@ -175,7 +175,10 @@ PYEOF
     ;;
 
   status)
-    python3 - "$PA_VAULT" "$PA_FEATURE_NOTE_DIR" "$PA_STATUS_SHIPPED" <<'PYEOF'
+    json_mode=0
+    [[ "${1:-}" == "--json" ]] && json_mode=1
+    python3 - "$PA_VAULT" "$PA_FEATURE_NOTE_DIR" "$PA_STATUS_SHIPPED" "$json_mode" <<'PYEOF'
+import json
 import re
 import sys
 from pathlib import Path
@@ -183,8 +186,11 @@ from pathlib import Path
 vault = Path(sys.argv[1])
 feature_dir = sys.argv[2]
 shipped_status = sys.argv[3].lower()
+json_mode = sys.argv[4] == "1"
 projects = vault / feature_dir
 if not projects.is_dir():
+    if json_mode:
+        print("[]")
     sys.exit(0)
 rows = []
 for note in projects.rglob("*.md"):
@@ -205,10 +211,14 @@ for note in projects.rglob("*.md"):
     repos = []
     if tags:
         repos = [t.strip() for t in tags.group(1).split(",") if t.strip() != "feature"]
-    rows.append((note.stem, s, ", ".join(repos)))
+    rows.append((note.stem, s, repos))
 
-for title, status, repos in sorted(rows):
-    print(f"{title}  [{status}]  {repos}")
+rows.sort()
+if json_mode:
+    print(json.dumps([{"title": t, "status": s, "repos": r} for t, s, r in rows]))
+else:
+    for title, status, repos in rows:
+        print(f"{title}  [{status}]  {', '.join(repos)}")
 PYEOF
     ;;
 
@@ -276,15 +286,29 @@ USAGE
     ;;
 
   peek)
-    repo="${1:-}"
+    repo="" json_mode=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --json) json_mode=1; shift ;;
+        *)      repo="$1"; shift ;;
+      esac
+    done
     if [[ -z "$repo" ]]; then
-      echo "usage: pa.sh peek <repo>" >&2
+      echo "usage: pa.sh peek [--json] <repo>" >&2
       exit 2
     fi
     state="$PA_STATE_DIR/$repo.json"
     if [[ ! -f "$state" ]]; then
-      echo "no state for $repo (no project Claude has reported yet)" >&2
+      if [[ $json_mode -eq 1 ]]; then
+        echo 'null'
+      else
+        echo "no state for $repo (no project Claude has reported yet)" >&2
+      fi
       exit 1
+    fi
+    if [[ $json_mode -eq 1 ]]; then
+      cat "$state"
+      exit 0
     fi
     python3 - "$state" <<'PYEOF'
 import json
@@ -321,17 +345,25 @@ PYEOF
     ;;
 
   peek-all)
+    json_mode=0
+    [[ "${1:-}" == "--json" ]] && json_mode=1
     if [[ ! -d "$PA_STATE_DIR" ]] || ! find "$PA_STATE_DIR" -maxdepth 1 -name '*.json' -print -quit | grep -q .; then
-      echo "no project state recorded yet"
+      if [[ $json_mode -eq 1 ]]; then
+        echo "[]"
+      else
+        echo "no project state recorded yet"
+      fi
       exit 0
     fi
-    python3 - "$PA_STATE_DIR" <<'PYEOF'
+    python3 - "$PA_STATE_DIR" "$json_mode" <<'PYEOF'
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
 d = Path(sys.argv[1])
+json_mode = sys.argv[2] == "1"
+states = []
 rows = []
 for f in sorted(d.glob("*.json")):
     if f.name.startswith(".") or f.name.startswith("vault-session-"):
@@ -340,6 +372,7 @@ for f in sorted(d.glob("*.json")):
         s = json.loads(f.read_text())
     except (OSError, json.JSONDecodeError):
         continue
+    states.append(s)
     last = s.get("last_update", "")
     try:
         age = int((datetime.now() - datetime.fromisoformat(last)).total_seconds())
@@ -365,6 +398,10 @@ for f in sorted(d.glob("*.json")):
         (s.get("last_tool") or "")[:20],
         todo_summary or (s.get("last_prompt") or "")[:60],
     ))
+
+if json_mode:
+    print(json.dumps(states))
+    sys.exit(0)
 if not rows:
     print("no state files")
 else:
