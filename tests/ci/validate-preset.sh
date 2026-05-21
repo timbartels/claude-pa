@@ -26,14 +26,27 @@ validate_one() {
 
   [[ -d "$dir" ]] || fail "$dir: not a directory"
 
-  for required in config.env SKILL.md daily-template.md README.md; do
-    [[ -f "$dir/$required" ]] || fail "$dir/$required: missing required file"
-  done
+  # config.env is required for every preset, config-only or otherwise.
+  [[ -f "$dir/config.env" ]] || fail "$dir/config.env: missing required file"
 
   # Loader must parse config.env without rejecting anything.
   if ! PYTHONPATH="$REPO_ROOT/lib" python3 -m pa.preset_loader "$dir" >/dev/null; then
     fail "$dir/config.env: loader rejected this file (see error above)"
   fi
+
+  # A .config-only marker opts the preset out of the SKILL.md /
+  # daily-template.md / README.md presence checks. Used by presets/default/
+  # which is consumed only as the wizard's vault-org fallback layer
+  # (config.env values), not as a `pa init --preset` target with a
+  # skill template.
+  if [[ -f "$dir/.config-only" ]]; then
+    printf '%s: OK (config-only)\n' "$dir"
+    return 0
+  fi
+
+  for required in SKILL.md daily-template.md README.md; do
+    [[ -f "$dir/$required" ]] || fail "$dir/$required: missing required file"
+  done
 
   # README must declare target audience + dependencies. Heuristic: keyword
   # presence. Cheap but catches the empty-README case.

@@ -1,0 +1,10 @@
+This preset intentionally ships only config.env.
+
+It is consumed as the wizard's vault-org fallback layer by
+`pa init` (auto-detect mode) — the SKILL.md, daily-template.md, and
+README.md that other presets ship are not used in that consumption
+path.
+
+If you want to invoke `pa init --preset default` to install a usable
+skill for a non-Tim Obsidian setup, add those three files. See
+presets/tim/ for the layout.

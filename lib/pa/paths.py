@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -80,6 +82,57 @@ _ALLOWED_KEYS = frozenset(
 )
 
 _VALID_BACKENDS = frozenset({"auto", "wezterm", "kitty", "iterm2", "tmux"})
+
+# Shared security primitives — used both here (defence-in-depth on the
+# bash-sourced user config) and by lib/pa/preset_loader.py (primary check
+# on third-party preset files). Single source of truth.
+#
+# Forbidden substrings (regex-independent check; catches escapes that
+# would only be dangerous in a shell context):
+#   $(   command substitution
+#   ${   brace-form variable expansion (we don't implement it)
+#   `    backtick command substitution
+#   \    escape sequences
+_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
+    "$(",
+    "${",
+    "`",
+    "\\",
+)
+
+# Strict bare-value character class — used by preset_loader's regex and
+# by validate_assignments. Letters, digits, underscore, plus a small set
+# of structural characters that paths and placeholders need.
+_STRICT_BARE_CHARS = r"[\w./:,=+@~{}-]"
+_STRICT_BARE_BODY = (
+    rf"{_STRICT_BARE_CHARS}*"
+    rf"(?:\$[A-Za-z_][A-Za-z0-9_]*{_STRICT_BARE_CHARS}*)*"
+)
+# Strict double-quoted body — anything except structural characters that
+# would break out of the quoted form.
+_STRICT_DQUOTED_CHARS = r"[^\"\\$`]"
+_STRICT_DQUOTED_BODY = (
+    rf"{_STRICT_DQUOTED_CHARS}*"
+    rf"(?:\$[A-Za-z_][A-Za-z0-9_]*{_STRICT_DQUOTED_CHARS}*)*"
+)
+# Strict assignment regex — the canonical form for preset files and for
+# validate_assignments (wizard input). Tighter than _ASSIGNMENT_RE above,
+# which exists for parsing the bash-written user config and so must
+# accept single quotes / a wider bare class.
+_STRICT_ASSIGNMENT_RE = re.compile(
+    r"""
+    ^\s*
+    (?:export\s+)?
+    (?P<key>[A-Z][A-Z0-9_]*)
+    \s*=\s*
+    (?:
+        "(?P<dquoted>""" + _STRICT_DQUOTED_BODY + r""")"
+      | (?P<bare>""" + _STRICT_BARE_BODY + r""")
+    )
+    \s*(?:\#.*)?$
+    """,
+    re.VERBOSE,
+)
 
 _DEFAULTS = {
     "PA_TERMINAL_BACKEND": "auto",
@@ -207,6 +260,12 @@ def _parse_file(path: Path) -> dict[str, str]:
             or match.group("bare")
             or ""
         )
+        for needle in _FORBIDDEN_SUBSTRINGS:
+            if needle in value:
+                raise ConfigError(
+                    f"pa: {path}:{lineno}: value for {key} contains forbidden "
+                    f"shell metacharacter {needle!r}"
+                )
         raw[key] = _expand(value)
 
     return raw
@@ -318,3 +377,155 @@ def ensure_runtime_dirs(cfg: Config) -> None:
     for d in (cfg.data_dir, cfg.state_dir, cfg.cache_dir, cfg.logs_dir):
         d.mkdir(parents=True, exist_ok=True)
         d.chmod(0o700)
+
+
+# Source-label suffix used by the wizard to thread "where did this value
+# come from" through the validator. Pattern: ``KEY=VALUE\t# (source)``.
+_SOURCE_LABEL_RE = re.compile(r"^(?P<assignment>.*?)\s*\t#\s*(?P<source>\(.+\))\s*$")
+
+
+def validate_assignments(
+    lines: list[str],
+) -> tuple[list[str], list[str]]:
+    """Validate KEY=VALUE assignments and emit shell-quoted output.
+
+    Reads a list of input lines, each ``KEY=VALUE`` optionally followed by
+    a tab + ``# (source)`` label (e.g. ``PA_VAULT=/foo\\t# (auto-detect)``).
+    Applies the same allowlist + regex + forbidden-substring + semantic
+    checks used by :func:`load_config`, plus a required-key presence check
+    over ``PA_VAULT`` and ``PA_PROJECTS_DIR``.
+
+    Args:
+        lines: Raw assignment lines (no trailing newlines required).
+
+    Returns:
+        A pair ``(out, errs)``:
+        - ``out``: ``KEY="<shell-quoted>"`` lines (each followed by the
+          original ``\\t# (source)`` label, when one was provided).
+        - ``errs``: ``pa init: <KEY>: <error>`` lines, one per failed
+          assignment plus one entry per missing required key.
+
+    Raises:
+        Nothing — all problems surface in ``errs``. Callers decide
+        success vs failure by checking whether ``errs`` is empty.
+    """
+    seen: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    out: list[str] = []
+    errs: list[str] = []
+
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+
+        # Split off the optional `\t# (source)` suffix so the assignment
+        # parser only sees `KEY=VALUE`.
+        source_label = ""
+        if label_match := _SOURCE_LABEL_RE.match(line):
+            line = label_match.group("assignment")
+            source_label = label_match.group("source")
+
+        match = _STRICT_ASSIGNMENT_RE.match(line)
+        if not match:
+            errs.append(
+                f"pa init: <unparseable>: cannot parse {line.rstrip()!r}"
+            )
+            continue
+
+        key = match.group("key")
+        if key not in _ALLOWED_KEYS:
+            errs.append(
+                f"pa init: {key}: unknown key (allowed: {sorted(_ALLOWED_KEYS)})"
+            )
+            continue
+
+        raw_value = match.group("dquoted")
+        if raw_value is None:
+            raw_value = match.group("bare") or ""
+
+        forbidden_hit = next(
+            (n for n in _FORBIDDEN_SUBSTRINGS if n in raw_value), None
+        )
+        if forbidden_hit is not None:
+            errs.append(
+                f"pa init: {key}: forbidden shell metacharacter {forbidden_hit!r}"
+            )
+            continue
+
+        value = _expand(raw_value)
+
+        # Semantic checks for keys that have a tighter contract than
+        # "string that matched the strict regex".
+        if key == "PA_TERMINAL_BACKEND" and value not in _VALID_BACKENDS:
+            errs.append(
+                f"pa init: {key}: {value!r} is not one of "
+                f"{sorted(_VALID_BACKENDS)}"
+            )
+            continue
+        if key == "PA_DASHBOARD_INTERVAL":
+            try:
+                ivalue = int(value)
+            except ValueError:
+                errs.append(
+                    f"pa init: {key}: {value!r} is not an integer"
+                )
+                continue
+            if ivalue < 1:
+                errs.append(f"pa init: {key}: must be >= 1")
+                continue
+
+        seen[key] = value
+        sources[key] = source_label
+
+    # Cross-key checks deferred until all assignments are parsed, so we
+    # can validate referential rules (PA_STATUS_SHIPPED ∈ PA_STATUS_VALUES).
+    if "PA_STATUS_VALUES" in seen and "PA_STATUS_SHIPPED" in seen:
+        status_values = tuple(
+            s.strip() for s in seen["PA_STATUS_VALUES"].split(",") if s.strip()
+        )
+        if not status_values:
+            errs.append("pa init: PA_STATUS_VALUES: must list at least one status")
+        elif seen["PA_STATUS_SHIPPED"] not in status_values:
+            errs.append(
+                f"pa init: PA_STATUS_SHIPPED: "
+                f"{seen['PA_STATUS_SHIPPED']!r} not in {list(status_values)}"
+            )
+
+    for required in ("PA_VAULT", "PA_PROJECTS_DIR"):
+        if required not in seen:
+            errs.append(f"pa init: {required}: missing required key")
+
+    if errs:
+        return [], errs
+
+    # Emit shell-quoted assignments. ``shlex.quote`` makes the right
+    # quoting decision; values already passed every check, so the bash
+    # source has no way to interpret them as anything but literals.
+    for key, value in seen.items():
+        suffix = f"\t# {sources[key]}" if sources[key] else ""
+        out.append(f"{key}={shlex.quote(value)}{suffix}")
+
+    return out, errs
+
+
+def _validate_assignments_cli() -> int:
+    """Entry point for ``python3 -m pa.paths validate-assignments``.
+
+    Reads stdin, calls :func:`validate_assignments`, prints output lines
+    to stdout, error lines to stderr. Exits 0 on success, 2 on any
+    validation failure.
+    """
+    lines = sys.stdin.read().splitlines()
+    out, errs = validate_assignments(lines)
+    for line in out:
+        print(line)
+    for err in errs:
+        print(err, file=sys.stderr)
+    return 2 if errs else 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "validate-assignments":
+        sys.exit(_validate_assignments_cli())
+    sys.exit("usage: python3 -m pa.paths validate-assignments < KEY=VALUE-lines")

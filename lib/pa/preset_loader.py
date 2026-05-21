@@ -25,79 +25,24 @@ Library form::
 from __future__ import annotations
 
 import os
-import re
 import shlex
 import sys
 from pathlib import Path
 
-from pa.paths import _ALLOWED_KEYS  # share the same allowlist as the user config
+# Share the allowlist + strict-parser primitives with pa.paths so the
+# wizard's validate_assignments and this loader can never drift apart.
+# Import direction: preset_loader → paths (paths is the lower layer).
+from pa.paths import (
+    _ALLOWED_KEYS,
+    _FORBIDDEN_SUBSTRINGS,
+)
+from pa.paths import (
+    _STRICT_ASSIGNMENT_RE as _ASSIGNMENT_RE,
+)
 
 
 class PresetError(Exception):
     """Raised when a preset file is malformed, unsafe, or unknown."""
-
-
-# Only KEY=VALUE assignments are recognised. Optional leading ``export``.
-#
-# Allowed in values:
-#   - Literal text (letters, digits, ``_ - . / : , = + @ ~``)
-#   - Literal braces ``{`` ``}`` — needed for placeholder syntax like
-#     ``{title}`` in PA_SPAWN_PROMPT_TEMPLATE
-#   - ``$VAR`` env references (expanded at parse time via
-#     ``os.path.expandvars`` — no shell invocation)
-#
-# Blocked (regex or substring check, see ``_FORBIDDEN_SUBSTRINGS``):
-#   - ``$(…)`` command substitution
-#   - ``${VAR}`` brace-form expansion (the parser does not implement it
-#     and we'd rather reject ambiguity than guess)
-#   - Backticks
-#   - Pipes, redirects, semicolons, ampersands
-#   - Parentheses (block ``(a||b)`` style)
-#   - Backslash escape sequences
-# Bare values: ASCII-safe path/identifier characters, plus literal braces
-# for placeholder syntax. ``$VAR`` references allowed via the alternation
-# (validated by the regex; further checked by _FORBIDDEN_SUBSTRINGS).
-_BARE_CHARS = r"[\w./:,=+@~{}-]"
-_BARE_BODY = (
-    rf"{_BARE_CHARS}*"
-    rf"(?:\$[A-Za-z_][A-Za-z0-9_]*{_BARE_CHARS}*)*"
-)
-# Quoted values: anything except the structural characters ``"`` ``\`` ``$``
-# ``` ` ``` — supports Unicode (middle-dot, em-dash, accented letters)
-# which often appear in human-facing labels. ``$VAR`` references allowed
-# the same way as in the bare form.
-_DQUOTED_CHARS = r"[^\"\\$`]"
-_DQUOTED_BODY = (
-    rf"{_DQUOTED_CHARS}*"
-    rf"(?:\$[A-Za-z_][A-Za-z0-9_]*{_DQUOTED_CHARS}*)*"
-)
-_ASSIGNMENT_RE = re.compile(
-    r"""
-    ^\s*
-    (?:export\s+)?
-    (?P<key>[A-Z][A-Z0-9_]*)
-    \s*=\s*
-    (?:
-        "(?P<dquoted>""" + _DQUOTED_BODY + r""")"
-      | (?P<bare>""" + _BARE_BODY + r""")
-    )
-    \s*(?:\#.*)?$
-    """,
-    re.VERBOSE,
-)
-
-# Defence-in-depth — even if the regex were to slip something past, these
-# substring checks catch shell escapes that actually need a shell to be
-# dangerous. ``;|&<>`` are intentionally NOT here: they can only do harm
-# unquoted, and we emit values via ``shlex.quote`` so they always reach
-# bash as literal characters inside a quoted string. The regex prevents
-# them appearing in bare values anyway.
-_FORBIDDEN_SUBSTRINGS = (
-    "$(",   # command substitution
-    "${",   # brace-form variable expansion (we don't implement it)
-    "`",    # backtick command substitution
-    "\\",   # escape sequences
-)
 
 
 def _expand(value: str) -> str:
