@@ -68,21 +68,72 @@ teardown() {
 }
 
 @test "pa init rejects value with command substitution metachar" {
-  # Even via --set, dangerous values should be rejected by _pa_safe_value
+  # With the validate_assignments funnel in place, --non-interactive
+  # mode now rejects $(...) values uniformly with the interactive path.
+  # Pre-refactor this slipped through; post-refactor it exits 2.
   run "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set 'PA_MAIN_TITLE=$(whoami)'
-  # Either error out or write the config but with the value rejected.
-  # In non-interactive mode the wizard does NOT re-prompt; it currently
-  # accepts the value verbatim. So this test just confirms the resulting
-  # config doesn't execute the substitution when sourced — it should be
-  # a literal string. (Defence-in-depth lives in lib/pa/paths.py which
-  # rejects malformed config files entirely.)
-  if [ "$status" -eq 0 ]; then
-    # If accepted, lib/paths.sh sourcing the file should NOT expand $(...)
-    # because %q-quoted values are inert under set -u. Verify the literal.
-    source "$XDG_CONFIG_HOME/claude-pa/config.sh" 2>/dev/null || true
-    [[ "${PA_MAIN_TITLE:-}" == *'$(whoami)'* ]] || [[ "${PA_MAIN_TITLE:-}" == "" ]]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"validation failed"* ]] || [[ "$output" == *"refusing to write"* ]]
+}
+
+# ─── Phase 3-7 additions ───────────────────────────────────────────────────
+
+@test "pa init --preset NOSUCH exits 2 with available list" {
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset NOSUCH \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"preset"* ]] && [[ "$output" == *"NOSUCH"* ]]
+  [[ "$output" == *"available presets"* ]]
+  [[ "$output" == *"tim"* ]]
+  [[ "$output" == *"default"* ]]
+}
+
+@test "pa init writes config with mode 600" {
+  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux" >/dev/null
+  local mode
+  # BSD stat (macOS) and GNU stat take different flags; handle both.
+  if mode=$(stat -f '%Lp' "$XDG_CONFIG_HOME/claude-pa/config.sh" 2>/dev/null); then :
+  else mode=$(stat -c '%a' "$XDG_CONFIG_HOME/claude-pa/config.sh")
   fi
+  [ "$mode" = "600" ]
+}
+
+@test "pa init --preset default --non-interactive writes config sourcing cleanly" {
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset default \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux"
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
+  # Default preset's status taxonomy includes in-review (Tim's does too)
+  grep -q "in-review" "$XDG_CONFIG_HOME/claude-pa/config.sh"
+}
+
+@test "pa init --non-interactive without --set PA_VAULT exits 2 with explicit error" {
+  # Use --preset default (which intentionally omits PA_VAULT) so the
+  # required-key check actually fires. tim preset bakes its own
+  # PA_VAULT, so this scenario can't be tested against tim.
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset default \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"PA_VAULT"* ]]
+}
+
+@test "pa init --wizard --non-interactive with tim preset matches v1 baseline" {
+  # --wizard wired on top of the existing --non-interactive path. Same
+  # result as bare --non-interactive (which now defaults to auto mode
+  # but with --set the auto-detect doesn't run for required keys).
+  run "$PA_ROOT/bin/pa" init --wizard --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux"
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
 }

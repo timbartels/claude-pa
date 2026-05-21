@@ -33,27 +33,14 @@ _PA_OPTIONAL_KEYS=(
 )
 _PA_ALL_KEYS=("${_PA_REQUIRED_KEYS[@]}" "${_PA_OPTIONAL_KEYS[@]}")
 
-_PA_DEFAULTS_PA_TERMINAL_BACKEND=auto
-_PA_DEFAULTS_PA_MAIN_TITLE=MAIN
-_PA_DEFAULTS_PA_DAILY_DIR=Daily
-_PA_DEFAULTS_PA_DAILY_TEMPLATE_PATH="_templates/Daily Note.md"
-_PA_DEFAULTS_PA_WORK_SECTION=Work
-_PA_DEFAULTS_PA_PERSONAL_SECTION=Personal
-_PA_DEFAULTS_PA_FEATURE_NOTE_DIR=PROJECTS
-_PA_DEFAULTS_PA_STATUS_VALUES="brainstorming,planned,in-progress,shipped"
-_PA_DEFAULTS_PA_STATUS_SHIPPED=shipped
-_PA_DEFAULTS_PA_SPAWN_PROMPT_TEMPLATE=""
-_PA_DEFAULTS_PA_DASHBOARD_INTERVAL=2
-_PA_DEFAULTS_PA_DEBUG=0
-
 # ─── Helpers ───────────────────────────────────────────────────────────────
 
-# Lookup the default for KEY. Returns empty string if no default exists
-# (PA_VAULT / PA_PROJECTS_DIR — both required, no built-in fallback).
-_pa_default_for() {
-  local var="_PA_DEFAULTS_$1"
-  printf '%s' "${!var:-}"
-}
+# Vault-org defaults previously lived here as an in-bash constant
+# table with a lookup helper. Both removed in Phase 7 of the pa init
+# refactor — presets/default/config.env is now the single source of
+# truth, consumed via _pa_load_preset/_pa_preset_value_for. The CI
+# guard at tests/ci/check-no-deprecated-symbols.sh fails the build if
+# the deprecated symbol names are reintroduced.
 
 # Reject values that could only be malicious in the user's config (which
 # IS sourced as bash). Mirrors the strict preset parser's intent without

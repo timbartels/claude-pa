@@ -59,6 +59,8 @@ jobs:
         run: python3 tests/ci/validate-manifest.py
       - name: validate-preset --all
         run: tests/ci/validate-preset.sh --all
+      - name: check-no-deprecated-symbols
+        run: tests/ci/check-no-deprecated-symbols.sh
 
   bash:
     name: bats + smoke

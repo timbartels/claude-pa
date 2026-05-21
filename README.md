@@ -36,6 +36,8 @@ pa init
 
 `pa init` walks you through configuration: terminal backend (auto-detected), preset selection, vault + projects paths, then prints the `~/.claude/settings.json` allow-rules snippet for manual paste. Re-run any time to tweak.
 
+Migrating from a pre-plugin `~/.claude/pa/` install? See [docs/bridge-from-legacy.md](docs/bridge-from-legacy.md) for the symlink + state-file steps.
+
 ## Quick start
 
 ```
