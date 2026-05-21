@@ -20,6 +20,7 @@
 #   pa.sh pr-status [<org>] <repo:branch>...  # one line per spec
 #   pa.sh kill <repo>                   # kill the pane for <repo>
 #   pa.sh restart <repo> [<prompt>]     # kill + respawn pane; default prompt from $PA_SPAWN_PROMPT_TEMPLATE
+#   pa.sh resume                        # after terminal crash: respawn dead-pane state files with `claude --continue`
 #   pa.sh session-touch [--morning-done] [--agenda-asked] [--note <text>]
 #   pa.sh session-state                 # print today's vault-session state JSON (or {})
 #   pa.sh session-resumable             # exit 0 if morning already done today
@@ -498,6 +499,55 @@ PYEOF
     terminal_activate "$new_pane" >/dev/null 2>&1 || true
     window_raise "$repo" >/dev/null 2>&1 || true
     echo "$new_pane"
+    ;;
+
+  resume)
+    # After accidental terminal close: respawn every project pane whose state
+    # file survived (SessionEnd hook deletes state on clean shutdown, so a
+    # surviving state file implies an unclean exit). Each respawn uses
+    # `claude --continue` so the prior conversation resumes intact.
+    if [[ ! -d "$PA_STATE_DIR" ]]; then
+      echo "resume: no state dir ($PA_STATE_DIR)" >&2
+      exit 0
+    fi
+    live_panes=$(terminal_list 2>/dev/null | cut -d'|' -f1)
+    spawned=0
+    skipped=0
+    failed=0
+    for state in "$PA_STATE_DIR"/*.json; do
+      [[ -f "$state" ]] || continue
+      base=$(basename "$state" .json)
+      case "$base" in
+        dashboard|vault-session-*|peon-ping) continue ;;
+      esac
+      repo=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("repo",""))' "$state")
+      cwd=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cwd",""))' "$state")
+      old_pane=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pane_id","") or "")' "$state")
+      [[ -z "$repo" || -z "$cwd" ]] && continue
+      if [[ -n "$old_pane" ]] && echo "$live_panes" | grep -qx "$old_pane"; then
+        echo "alive: $repo (pane $old_pane)"
+        skipped=$((skipped + 1))
+        continue
+      fi
+      if [[ ! -d "$cwd" ]]; then
+        echo "skip: $repo (cwd missing: $cwd)" >&2
+        failed=$((failed + 1))
+        continue
+      fi
+      echo "resume: $repo (was pane $old_pane → spawning with claude --continue)"
+      new_pane=$(terminal_spawn "$cwd" "claude --continue" 2>/dev/null) || {
+        echo "  spawn failed for $repo" >&2
+        failed=$((failed + 1))
+        continue
+      }
+      sleep 0.5
+      terminal_set_title "$new_pane" "$repo" >/dev/null 2>&1 || true
+      terminal_activate "$new_pane" >/dev/null 2>&1 || true
+      spawned=$((spawned + 1))
+    done
+    command -v relayout >/dev/null && relayout >/dev/null 2>&1 || true
+    echo "---"
+    echo "resumed: $spawned, alive: $skipped, failed: $failed"
     ;;
 
   snap)

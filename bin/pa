@@ -139,6 +139,12 @@ _pa_orchestrate_vault_session() {
   # exits 0 with a message. Either way: best-effort, never fatal.
   "$pa_sh" dashboard 0.5 >/dev/null 2>&1 || true
 
+  # Auto-resume project panes whose state files survived. Clean shutdowns
+  # delete state via SessionEnd hook, so a surviving state file = unclean
+  # exit (terminal crash / accidental close). resume re-spawns each with
+  # `claude --continue`. No-op if state dir empty.
+  "$pa_sh" resume >/dev/null 2>&1 || true
+
   # Tag this pane as the orchestrator. Same pane-id detection as the hook.
   local pane
   pane=$(_pa_active_pane)
