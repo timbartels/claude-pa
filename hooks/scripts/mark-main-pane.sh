@@ -8,7 +8,11 @@
 
 set -euo pipefail
 
-_self="$(cd "$(dirname "$0")" && pwd)"
+# Resolve $0 through symlinks so legacy bridge symlinks (e.g. a user's
+# ~/.claude/pa/hooks/mark-vault-main.sh → plugin scripts dir) still find
+# $PA_LIB inside the plugin install rather than next to the symlink.
+_real="$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")"
+_self="$(cd "$(dirname "$_real")" && pwd)"
 _plugin_root="$(cd "$_self/../.." && pwd)"
 PA_LIB="$_plugin_root/lib"
 

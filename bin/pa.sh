@@ -30,7 +30,12 @@ set -euo pipefail
 
 # Self-locate. $(dirname "$0") instead of $CLAUDE_PLUGIN_ROOT because bin/-PATH
 # invocations from Claude Code don't guarantee the env var (only hook/MCP do).
-PA_BIN="$(cd "$(dirname "$0")" && pwd)"
+# Resolve $0 through symlinks so users can put `~/.local/bin/pa` or
+# `~/.claude/pa/bin/pa.sh` as a symlink to the plugin install and still
+# locate $PA_LIB correctly inside the plugin (the symlink chain points
+# back into the cache dir).
+_pa_real="$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")"
+PA_BIN="$(cd "$(dirname "$_pa_real")" && pwd)"
 PA_PLUGIN_ROOT="$(cd "$PA_BIN/.." && pwd)"
 PA_LIB="$PA_PLUGIN_ROOT/lib"
 
