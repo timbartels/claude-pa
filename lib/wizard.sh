@@ -92,9 +92,24 @@ _pa_plugin_root_for_wizard() {
 
 # Render an allow-rules JSON snippet for ~/.claude/settings.json based on
 # the configured terminal backend. Only the rules PA actually needs.
+#
+# The Bash rule for the dispatcher is `Bash(pa.sh:*)` — bare command, not
+# an absolute path. The plugin runtime auto-adds the plugin's `bin/` to
+# the Bash tool's $PATH, so `pa.sh foo` resolves cleanly. The bare form
+# is stable across marketplace reinstalls and `pa dev on` toggles
+# (no path churn), and matches no matter how Claude invokes it.
+#
+# Args 3 (vault) + 2 (data_dir) still receive absolute paths because
+# Read/Write/Edit rules are path-shaped by Claude Code's allow-rule
+# grammar — there's no equivalent of "any path under the plugin's
+# bin/" for them.
+#
+# The fourth positional ($pa_sh_path) is ignored, kept for callers
+# that still pass it for backwards compatibility. Document the
+# deprecation in CONTRIBUTING when this lands.
 _pa_emit_settings_snippet() {
   local backend="$1" data_dir="$2" vault="$3"
-  local pa_sh_path="$4"
+  # pa_sh_path="${4:-}"  # legacy positional, unused (see note above)
 
   local backend_rule=""
   case "$backend" in
@@ -108,7 +123,7 @@ _pa_emit_settings_snippet() {
 {
   "permissions": {
     "allow": [
-      "Bash($pa_sh_path:*)",
+      "Bash(pa.sh:*)",
       ${backend_rule:+$backend_rule,}
       "Read($data_dir/**)",
       "Read($vault/**)",

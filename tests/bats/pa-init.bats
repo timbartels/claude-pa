@@ -58,6 +58,18 @@ teardown() {
   [ ! -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
 }
 
+@test "pa init --print-settings emits bare Bash(pa.sh:*) rule (no absolute path)" {
+  # The plugin runtime auto-adds <plugin>/bin to the Bash tool's PATH, so
+  # the dispatcher allow rule is stable as a bare command. Absolute-path
+  # rules would churn on every reinstall + `pa dev on` toggle.
+  run "$PA_ROOT/bin/pa" init --print-settings --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"Bash(pa.sh:*)"'* ]]
+  [[ "$output" != *'Bash(/'* ]]   # no absolute-path Bash rule
+}
+
 @test "pa init --non-interactive exits 2 when required vars are missing" {
   # Vault path doesn't exist — required-var validation fires
   run "$PA_ROOT/bin/pa" init --non-interactive \
