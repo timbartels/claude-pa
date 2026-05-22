@@ -918,7 +918,11 @@ def render(state_dir: Path) -> None:
     alive = live_pane_ids()
 
     files = (
-        sorted(f for f in state_dir.glob("*.json") if not f.name.startswith("."))
+        sorted(
+            f for f in state_dir.glob("*.json")
+            if not f.name.startswith(".")
+            and not f.name.startswith("vault-session-")
+        )
         if state_dir.is_dir()
         else []
     )
