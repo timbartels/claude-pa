@@ -111,6 +111,15 @@ _pa_emit_settings_snippet() {
   local backend="$1" data_dir="$2" vault="$3"
   # pa_sh_path="${4:-}"  # legacy positional, unused (see note above)
 
+  # When the configured backend is the literal `auto`, resolve it to a
+  # concrete name at emit time so the snippet always carries a real Bash
+  # rule. lib/paths.sh does the equivalent resolution at runtime; without
+  # this, users with PA_TERMINAL_BACKEND=auto (the default-preset value)
+  # would get an empty backend allow line.
+  if [[ "$backend" == "auto" ]]; then
+    backend=$(_pa_resolve_backend)
+  fi
+
   local backend_rule=""
   case "$backend" in
     wezterm) backend_rule='"Bash(wezterm:*)"' ;;
@@ -1161,9 +1170,12 @@ USAGE
     kitty)   command -v kitten >/dev/null 2>&1 || command -v kitty >/dev/null 2>&1 || { _pa_check "kitten / kitty on PATH" FAIL "missing"; fails=$((fails + 1)); } ;;
   esac
 
-  # 6. settings.json allow rules — warn only, never fail
+  # 6. settings.json allow rules — warn only, never fail. Accept either
+  # the bare `Bash(pa.sh:*)` form (current default since the plugin
+  # runtime auto-adds bin/ to the Bash tool's PATH) or the legacy
+  # absolute-path form for users who pasted the older snippet.
   local sj="$HOME/.claude/settings.json"
-  if [[ -f "$sj" ]] && grep -q "$plugin_root/bin/pa.sh" "$sj" 2>/dev/null; then
+  if [[ -f "$sj" ]] && grep -qE "Bash\((pa\.sh|${plugin_root//\//\\/}/bin/pa\.sh):\*\)" "$sj" 2>/dev/null; then
     _pa_check "settings.json allow rule for pa.sh" OK
   else
     _pa_check "settings.json allow rule for pa.sh" WARN "not detected (run \`pa init --print-settings\` for the snippet)"

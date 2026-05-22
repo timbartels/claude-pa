@@ -64,3 +64,23 @@ _init_clean() {
   [[ "$output" == *"PA_VAULT directory"* ]]
   [[ "$output" == *"not a directory"* ]] || [[ "$output" == *"✗"* ]]
 }
+
+@test "pa doctor detects bare Bash(pa.sh:*) allow rule in settings.json" {
+  # Bug: doctor's grep used to look only for the absolute-path form, so
+  # users who pasted the current bare snippet got a permanent WARN.
+  _init_clean
+  mkdir -p "$TMPHOME/.claude"
+  printf '{"permissions":{"allow":["Bash(pa.sh:*)"]}}' > "$TMPHOME/.claude/settings.json"
+  run env HOME="$TMPHOME" "$PA_ROOT/bin/pa" doctor
+  [[ "$output" == *"✓ settings.json allow rule for pa.sh"* ]]
+}
+
+@test "pa doctor still detects legacy absolute-path Bash rule" {
+  # Backward-compat: users who pasted the pre-PR-#3 snippet shouldn't
+  # suddenly see a WARN after upgrading.
+  _init_clean
+  mkdir -p "$TMPHOME/.claude"
+  printf '{"permissions":{"allow":["Bash(%s/bin/pa.sh:*)"]}}' "$PA_ROOT" > "$TMPHOME/.claude/settings.json"
+  run env HOME="$TMPHOME" "$PA_ROOT/bin/pa" doctor
+  [[ "$output" == *"✓ settings.json allow rule for pa.sh"* ]]
+}

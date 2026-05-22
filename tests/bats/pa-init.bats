@@ -58,6 +58,20 @@ teardown() {
   [ ! -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
 }
 
+@test "pa init --print-settings resolves PA_TERMINAL_BACKEND=auto to a concrete Bash rule" {
+  # Bug: default preset ships PA_TERMINAL_BACKEND=auto. Pre-fix the
+  # snippet emitter's case statement didn't handle "auto", emitting an
+  # empty backend allow line. Now _pa_emit_settings_snippet resolves
+  # auto -> {wezterm|kitty|iterm2|tmux} before the case match.
+  run "$PA_ROOT/bin/pa" init --print-settings --non-interactive --preset default \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects"
+  [ "$status" -eq 0 ]
+  # At least one backend Bash rule must be present beyond the bare pa.sh.
+  backend_count=$(echo "$output" | grep -cE '"Bash\((wezterm|kitten|kitty|tmux|osascript):\*\)"')
+  [ "$backend_count" -gt 0 ]
+}
+
 @test "pa init --print-settings emits bare Bash(pa.sh:*) rule (no absolute path)" {
   # The plugin runtime auto-adds <plugin>/bin to the Bash tool's PATH, so
   # the dispatcher allow rule is stable as a bare command. Absolute-path
