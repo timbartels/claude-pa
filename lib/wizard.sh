@@ -634,7 +634,9 @@ USAGE
 
   # TTY auto-promotion — matches gh auth login. Stdin not a TTY ⇒ we
   # cannot prompt, so behave like --non-interactive even without the flag.
-  if [[ ! -t 0 ]]; then
+  # PA_INIT_FORCE_INTERACTIVE=1 bypasses this for bats coverage of the
+  # interactive path (where stdin is piped, not a real TTY).
+  if [[ "${PA_INIT_FORCE_INTERACTIVE:-0}" != "1" && ! -t 0 ]]; then
     non_interactive=1
   fi
 
@@ -679,28 +681,31 @@ USAGE
 
   local config_file="$CONFIG_DIR/config.sh"
 
-  # Existing-config detection — interactive only. CI / --non-interactive
-  # always overwrites; user opted in by passing the flag. --wizard does
-  # NOT bypass this prompt (idempotence preserved across modes).
+  # Existing-config detection — aws configure-style per-field merge.
+  # CI / --non-interactive / --print-settings overwrites without prompts.
+  # In interactive mode, source the existing config so its values become
+  # the shell-layer defaults, then force the per-field walk by switching
+  # to wizard mode. User presses Enter to keep, types to change, Ctrl-C
+  # to abort. The merge_existing flag below short-circuits the preset
+  # auto-load so the user's existing values aren't shadowed by preset
+  # defaults during the per-field walk.
+  local merge_existing=0
   if [[ -f "$config_file" && $non_interactive -eq 0 && $print_settings -eq 0 ]]; then
-    note "existing config at $config_file"
-    printf 'choose: [k]eep + tweak / [r]eplace / [c]ancel [k]: ' >&2
-    local choice
-    if ! IFS= read -r choice; then
-      die "pa init: stdin closed" 1
-    fi
-    case "${choice:-k}" in
-      c|C) note "cancelled"; return 0 ;;
-      r|R) : ;;
-      *)
-        # shellcheck disable=SC1090
-        source "$config_file"
-        ;;
-    esac
+    note "existing config at $config_file — re-run prompts per field"
+    note "  press Enter to keep current value, type new value to change, Ctrl-C to cancel"
+    # shellcheck disable=SC1090
+    source "$config_file"
+    mode=wizard
+    merge_existing=1
   fi
 
-  # Preset selection per mode.
+  # Preset selection per mode. merge_existing=1 (re-run with existing
+  # config) skips preset auto-load entirely so the user's existing
+  # values surface as shell-layer defaults instead of being shadowed.
   local preset=""
+  if [[ "$merge_existing" -eq 1 ]]; then
+    : # leave preset empty; existing config is the source of truth
+  else
   case "$mode" in
     auto)
       preset="default"
@@ -734,6 +739,7 @@ USAGE
       fi
       ;;
   esac
+  fi  # /merge_existing guard
 
   _pa_load_preset "$plugin_root" "$preset"
 

@@ -138,6 +138,60 @@ teardown() {
   [[ "$output" == *"PA_VAULT"* ]]
 }
 
+@test "pa init re-run merges existing config: Enter through every field keeps current" {
+  # First run: write a baseline config.
+  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux" \
+    --set "PA_MAIN_TITLE=BASELINE-TITLE" >/dev/null
+  before=$(cat "$XDG_CONFIG_HOME/claude-pa/config.sh")
+
+  # Re-run interactively with PA_INIT_FORCE_INTERACTIVE=1 + a stream of
+  # 20 newlines (more than enough for the 14-field walk). Each Enter
+  # accepts the current shell value as the default.
+  run env PA_INIT_FORCE_INTERACTIVE=1 \
+    bash -c "yes '' | head -20 | '$PA_ROOT/bin/pa' init"
+  [ "$status" -eq 0 ]
+
+  after=$(cat "$XDG_CONFIG_HOME/claude-pa/config.sh")
+  # Strip the date-stamped header (line 1 changes between writes) for
+  # the equality check.
+  before_body=$(echo "$before" | tail -n +2)
+  after_body=$(echo "$after" | tail -n +2)
+  [ "$before_body" = "$after_body" ]
+}
+
+@test "pa init re-run merges existing config: typed value overrides one field" {
+  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux" \
+    --set "PA_MAIN_TITLE=BEFORE" >/dev/null
+
+  # PA_VAULT (1st prompt), PA_PROJECTS_DIR (2nd), PA_TERMINAL_BACKEND
+  # (3rd), PA_MAIN_TITLE (4th). Keep first three, override 4th, keep rest.
+  run env PA_INIT_FORCE_INTERACTIVE=1 \
+    bash -c "printf '\n\n\nAFTER\n\n\n\n\n\n\n\n\n\n\n' | '$PA_ROOT/bin/pa' init"
+  [ "$status" -eq 0 ]
+
+  source "$XDG_CONFIG_HOME/claude-pa/config.sh"
+  [ "$PA_VAULT" = "$TMPHOME/vault" ]
+  [ "$PA_MAIN_TITLE" = "AFTER" ]
+}
+
+@test "pa init --non-interactive on existing config still overwrites without prompts" {
+  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux" >/dev/null
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+    --set "PA_VAULT=$TMPHOME/vault" \
+    --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
+    --set "PA_TERMINAL_BACKEND=tmux"
+  [ "$status" -eq 0 ]
+}
+
 @test "pa init --wizard --non-interactive with tim preset matches v1 baseline" {
   # --wizard wired on top of the existing --non-interactive path. Same
   # result as bare --non-interactive (which now defaults to auto mode
