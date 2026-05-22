@@ -13,14 +13,13 @@
 #
 # Usage:
 #   pa                       launch the vault session (dev plugin if `pa dev on`, marketplace otherwise)
+#   pa init                  three-mode wizard (auto-detect / --preset / --wizard)
+#   pa doctor                health check
+#   pa uninstall             clean removal
+#   pa shell-init [shell]    emit shell init snippet (bash/zsh/fish, auto-detected from $SHELL)
 #   pa dev on [path]         enable dev mode; default path: ~/Projects/claude-pa
 #   pa dev off               disable dev mode (back to marketplace install)
 #   pa dev status            show current mode + active path
-#
-# Future subcommands (Phase 5 of the implementation plan):
-#   pa init                  interactive wizard
-#   pa doctor                health check
-#   pa uninstall             clean removal
 
 set -euo pipefail
 
@@ -242,6 +241,51 @@ case "${1:-}" in
     # shellcheck source=../lib/wizard.sh
     source "$wizard_lib"
     "pa_${sub}" "$@"
+    ;;
+  shell-init)
+    # Emit a shell-init snippet the user pastes (or `eval`s) into their rc
+    # file. Adds the plugin's bin/ to $PATH so `pa` resolves without a
+    # ~/.local/bin/pa symlink. Mirrors the mise / direnv pattern:
+    #     eval "$(pa shell-init zsh)"
+    shift
+    requested="${1:-}"
+    # Auto-detect from $SHELL when no arg given. Works for the common
+    # interactive shells. Falls back to bash.
+    if [[ -z "$requested" ]]; then
+      case "$(basename -- "${SHELL:-}")" in
+        zsh)  requested=zsh ;;
+        fish) requested=fish ;;
+        *)    requested=bash ;;
+      esac
+    fi
+    # Resolve plugin bin/ via the symlink-aware script-dir helper so the
+    # snippet always points at the live install (works whether the user
+    # invoked us via $PATH, marketplace, or a dev checkout).
+    plugin_bin="$(_pa_script_dir)"
+    case "$requested" in
+      bash|zsh)
+        cat <<SH
+# claude-pa shell init — add to your ~/.${requested}rc:
+#   eval "\$(pa shell-init ${requested})"
+case ":\$PATH:" in
+  *":${plugin_bin}:"*) ;;
+  *) export PATH="${plugin_bin}:\$PATH" ;;
+esac
+SH
+        ;;
+      fish)
+        cat <<FISH
+# claude-pa shell init — add to your ~/.config/fish/config.fish:
+#   pa shell-init fish | source
+if not contains "${plugin_bin}" \$PATH
+    set -gx PATH "${plugin_bin}" \$PATH
+end
+FISH
+        ;;
+      *)
+        die "pa shell-init: unsupported shell '${requested}' (supported: bash, zsh, fish)" 2
+        ;;
+    esac
     ;;
   -h|--help|help)
     sed -n '/^# pa/,/^$/p' "$0" | sed 's/^# \{0,1\}//'
