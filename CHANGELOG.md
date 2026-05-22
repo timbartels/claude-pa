@@ -4,6 +4,46 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and [
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-22
+
+`pa init` three-mode refactor + four follow-ups + verification bugfixes.
+
+### Added
+
+- `pa init` three modes selectable via flags. Default mode (no flags) auto-detects vault + projects-dir + backend; confirms with a source-labelled block; writes. `--wizard` walks every field with the previous-style default chain. `--preset NAME` is preset-only; `--preset NAME` is validated against `presets/<name>/` before any other work fires.
+- `pa shell-init <shell>` subcommand emits an eval-style PATH snippet for bash / zsh / fish. Auto-detects from `$SHELL`; falls back to bash on empty.
+- `presets/default/config.env` (config-only preset) ships PARA-light vault-org defaults the wizard consumes as the fallback layer when auto-detect can't resolve.
+- `lib/_backend_detect.sh` — single source of truth for terminal backend detection. Replaces 3 inlined copies in `lib/paths.sh`, `pa_doctor`, and the wizard.
+- `lib/pa/paths.py::validate_assignments` — strict allowlist + regex + semantic validator. Every resolved value pipes through it before write regardless of mode (closes a `--non-interactive` injection gap that previously let `$(...)` slip into the sourced config).
+- Atomic config write: same-directory `mktemp` → `chmod 600` → atomic `mv`. `trap` on `EXIT/INT/TERM` removes any in-flight tmpfile. `flock` on `$CONFIG_DIR/.init.lock` serializes concurrent `pa init` runs.
+- Launcher symlink offer: post-write offer for `~/.local/bin/pa`. Nix-managed `~/.local/bin` short-circuits. `--force-symlink` repoints an existing symlink atomically; refuses to clobber regular files regardless of flag.
+- `docs/bridge-from-legacy.md` — doc-only migration guide for users coming from the pre-plugin `~/.claude/pa/` layout.
+- Upward-walk vault detection (`_pa_walk_upward_for_vault`) from `$CWD` looking for `.obsidian/`. Runs before the iCloud / `~/Documents` / `~/Obsidian` broad scan.
+- aws configure-style per-field merge on re-run. Existing config + interactive `pa init` sources the file, switches to wizard mode, and walks every field with the current value as the default. Enter keeps, type to change, Ctrl-C aborts. Preset auto-load is skipped (`merge_existing` flag) so user values aren't shadowed.
+
+### Changed
+
+- Settings allow-rule snippet now uses bare `Bash(pa.sh:*)` instead of an absolute path. The plugin runtime auto-adds the plugin's `bin/` to the Bash tool's `$PATH`; bare form stays stable across marketplace reinstalls and `pa dev on` toggles.
+- `_pa_emit_settings_snippet` resolves `PA_TERMINAL_BACKEND=auto` to a concrete backend at emit time via `_pa_resolve_backend` — previously the snippet's case statement missed `auto`, leaving the backend allow line empty.
+- `pa doctor` settings.json detection accepts either bare `Bash(pa.sh:*)` or the legacy absolute-path form.
+- TTY auto-promotion: `pa init` with non-TTY stdin implicitly behaves like `--non-interactive` (matches `gh auth login`).
+- `tests/bats/pa-init.bats` setup unsets PA_* env that may leak from a developer's parent shell.
+
+### Removed
+
+- `lib/wizard.sh::_PA_DEFAULTS_*` constants and `_pa_default_for()` helper. `presets/default/config.env` is now the single source of truth for wizard-time vault-org defaults. CI guard at `tests/ci/check-no-deprecated-symbols.sh` fails the build on regression.
+
+### Security
+
+- `_FORBIDDEN_SUBSTRINGS` + the strict assignment regex moved DOWN into `lib/pa/paths.py`. `lib/pa/preset_loader.py` imports them (preserving the existing `preset_loader → paths` import direction). Single source of truth.
+- Defence-in-depth: `lib/pa/paths.py::_parse_file` now applies `_FORBIDDEN_SUBSTRINGS` against the bash-sourced user config too.
+- Auto-detected vault paths flow through `_pa_resolve_safe` — rejects symlink targets outside `$HOME` unless `PA_ALLOW_EXTERNAL=1`.
+- Backend detection emits one of four literal strings (`wezterm`/`kitty`/`iterm2`/`tmux`), never verbatim env content.
+
+### Fixed
+
+- `bin/pa.sh` + `hooks/scripts/mark-main-pane.sh` resolve `$0` via `realpath` so symlinked launchers (`~/.local/bin/pa` → plugin install) find `$PA_LIB` inside the actual plugin tree.
+
 ## [0.1.0] — 2026-05-21
 
 First public release. Extracts the personal-assistant daily driver from `~/.claude/pa/` into a Claude Code plugin installable via the marketplace.

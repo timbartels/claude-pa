@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "claude-pa",
   "description": "Personal assistant for Obsidian-style vault management, daily-note carry-over, multi-pane terminal orchestration, cross-pane state IPC, live dashboard, and end-of-day commit wrap. Supports WezTerm, Kitty, iTerm2 native plus tmux universal fallback.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": {
     "name": "Tim Bartels"
   },
