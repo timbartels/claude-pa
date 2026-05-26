@@ -620,17 +620,40 @@ EOF
       exit 0
     fi
     state_file="$PA_STATE_DIR/dashboard.pane"
-    existing=""
+    existing=""   # pane alive AND watch loop running
+    stale=""      # pane alive but watch loop died (bare shell left behind)
     if [[ -f "$state_file" ]]; then
       candidate=$(cat "$state_file" 2>/dev/null || true)
-      if [[ -n "$candidate" ]] && wezterm cli list --format json 2>/dev/null \
-        | python3 -c "import json,sys; ids={str(p['pane_id']) for p in json.load(sys.stdin)}; sys.exit(0 if sys.argv[1] in ids else 1)" "$candidate" 2>/dev/null; then
-        existing="$candidate"
+      if [[ -n "$candidate" ]]; then
+        # tty_name of the candidate pane ("" if the pane no longer exists)
+        tty=$(wezterm cli list --format json 2>/dev/null \
+          | python3 -c "import json,sys; m={str(p['pane_id']):(p.get('tty_name') or '') for p in json.load(sys.stdin)}; print(m.get(sys.argv[1],''))" "$candidate" 2>/dev/null)
+        if [[ -n "$tty" ]]; then
+          # Pane exists, but a surviving bash shell keeps the pane_id alive
+          # after the watch loop exits — so the pane title (always "bash") and
+          # mere pane existence are not proof the dashboard is running. Confirm
+          # the watch loop is actually on the pane's tty before trusting it.
+          if ps -t "${tty#/dev/}" -o command= 2>/dev/null | grep -q "pa.sh watch"; then
+            existing="$candidate"
+          else
+            stale="$candidate"
+          fi
+        fi
       fi
     fi
     if [[ -n "$existing" ]]; then
       terminal_activate "$existing" >/dev/null 2>&1 || true
       echo "$existing (already running)"
+      exit 0
+    fi
+    if [[ -n "$stale" ]]; then
+      # Reuse the surviving pane: restart the watch loop in place rather than
+      # spawning a second pane and orphaning the dead one.
+      terminal_send "$stale" "$PA_BIN/pa.sh watch $interval"$'\n' >/dev/null 2>&1 || true
+      sleep 0.3
+      terminal_set_title "$stale" "[PA:Dashboard]" >/dev/null 2>&1 || true
+      terminal_activate "$stale" >/dev/null 2>&1 || true
+      echo "$stale (restarted)"
       exit 0
     fi
     anchor="${WEZTERM_PANE:-}"
