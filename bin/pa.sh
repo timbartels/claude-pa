@@ -651,7 +651,9 @@ EOF
       # spawning a second pane and orphaning the dead one.
       terminal_send "$stale" "$PA_BIN/pa.sh watch $interval"$'\n' >/dev/null 2>&1 || true
       sleep 0.3
-      terminal_set_title "$stale" "[PA:Dashboard]" >/dev/null 2>&1 || true
+      # No set_title: dashboard is a split sharing the orchestrator's tab,
+      # so a tab title would clobber the main pane's [PA:...] title. The
+      # watch loop self-labels its pane via OSC 2.
       terminal_activate "$stale" >/dev/null 2>&1 || true
       echo "$stale (restarted)"
       exit 0
@@ -666,7 +668,8 @@ EOF
     fi
     new_pane=$(wezterm cli split-pane --pane-id "$anchor" --right --percent 35 -- "$PA_BIN/pa.sh" watch "$interval")
     sleep 0.3
-    terminal_set_title "$new_pane" "[PA:Dashboard]" >/dev/null 2>&1 || true
+    # No set_title: see the stale-restart branch above. The watch loop
+    # self-labels its own pane via OSC 2 without touching the tab title.
     echo "$new_pane" > "$state_file"
     echo "$new_pane"
     ;;
@@ -675,14 +678,20 @@ EOF
     today=$(date +%Y-%m-%d)
     saved=0
     killed=0
+    # Dashboard pane is identified by its recorded pane id, not its title —
+    # the dashboard no longer sets a tab title (it's a split sharing the
+    # orchestrator's tab; titling it would clobber the main pane's title).
+    dashboard_pid=""
+    [[ -f "$PA_STATE_DIR/dashboard.pane" ]] \
+      && dashboard_pid=$(cat "$PA_STATE_DIR/dashboard.pane" 2>/dev/null || true)
     # Pull "$pane|$cwd|$title" via the abstraction. Skip the orchestrator
     # pane (PA_MAIN_TITLE) and the dashboard pane. Save buffers for panes
     # whose cwd is inside $PA_PROJECTS_DIR.
     while IFS='|' read -r pid cwd title; do
       [[ -z "$pid" ]] && continue
+      [[ -n "$dashboard_pid" && "$pid" == "$dashboard_pid" ]] && continue
       case "$title" in
         *"$PA_MAIN_TITLE"*) continue ;;
-        *"PA:Dashboard"*) continue ;;
       esac
       case "$cwd" in
         "$PA_PROJECTS_DIR"/*) ;;
@@ -726,6 +735,10 @@ EOF
       interval="$PA_DASHBOARD_INTERVAL"
     fi
     printf '\033[?1049h\033[?25l'
+    # OSC 2 sets this pane's own title. wezterm honours program-emitted
+    # pane titles; unlike `set-tab-title` it does NOT bleed onto sibling
+    # panes sharing the tab (the dashboard is a split off the orchestrator).
+    printf '\033]2;PA Dashboard\007'
     trap 'printf "\033[?25h\033[?1049l"; exit 0' INT TERM
     printf '\033[2J\033[H'
     while :; do
