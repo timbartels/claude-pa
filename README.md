@@ -2,14 +2,14 @@
 
 Personal assistant for Obsidian-style vault management as a Claude Code plugin. Daily-note creation + carry-over, multi-pane terminal orchestration, cross-pane state IPC, live dashboard, end-of-day commit wrap, same-day session resume.
 
-<!-- badges (real CI / version / license badges land at v0.1.0 release) -->
+<!-- badges -->
 [![ci](https://img.shields.io/badge/ci-pending-lightgrey)](.github/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-0.1.0-blue)](.claude-plugin/plugin.json)
+[![version](https://img.shields.io/badge/version-0.2.1-blue)](.claude-plugin/plugin.json)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Status
 
-v0.1.0 — first public release. Tim's own daily driver. Production-grade for his vault layout; friends should expect rough edges on first install and report them.
+v0.2.1 — Tim's own daily driver. Production-grade for his vault layout; friends should expect rough edges on first install and report them.
 
 ## Requirements
 
@@ -38,6 +38,20 @@ pa init
 
 Migrating from a pre-plugin `~/.claude/pa/` install? See [docs/bridge-from-legacy.md](docs/bridge-from-legacy.md) for the symlink + state-file steps.
 
+## Updating
+
+```
+/plugin marketplace update claude-pa   # refresh the catalog (git-pulls the marketplace clone)
+/plugin                                # plugin manager → claude-pa → Update
+```
+
+Claude Code installs plugins in two stages, so a single command isn't enough:
+
+1. **Marketplace clone** (`~/.claude/plugins/marketplaces/claude-pa/`) — a git checkout that *advertises* available versions. `/plugin marketplace update` pulls it.
+2. **Cache install** (`~/.claude/plugins/cache/claude-pa/claude-pa/<version>/`) — the copy that *actually runs*. `/plugin` → Update installs the new version here and repoints the active pin in `installed_plugins.json`.
+
+If `pa` still reports an old version after updating, the cache install didn't bump — re-open `/plugin` and confirm claude-pa shows the new version, then reload the session so the hooks and launcher pick it up.
+
 ## Quick start
 
 ```
@@ -64,16 +78,16 @@ The plugin registers an MCP stdio server (`pa.mcp_server`) exposing five tools �
 
 ## Presets
 
-`presets/tim/` ships in v0.1 — full Obsidian (iCloud MyVault) + Compound Engineering workflow flavor. Pick it at `pa init`, or "start fresh" to answer every question. New presets are welcome via PR — see `presets/README.md`.
+`presets/tim/` ships in v0.2.1 — full Obsidian (iCloud MyVault) + Compound Engineering workflow flavor. Pick it at `pa init`, or "start fresh" to answer every question. New presets are welcome via PR — see `presets/README.md`.
 
 ## Privacy + data handling
 
-- **All state local-only.** No network telemetry, no analytics, no opt-in metrics in v0.1.
+- **All state local-only.** No network telemetry, no analytics, no opt-in metrics in v0.2.1.
 - **Vault contents never sent remotely.** Any future remote feature would require an explicit opt-in + documented data flow.
 - **State files** under `$XDG_DATA_HOME/claude-pa/state/` may contain prompt text + daily-note excerpts. Stored with mode 0600; the data dir is 0700.
 - **`pa uninstall`** wipes config + (optionally) data. The vault itself is never touched.
 
-## Known limitations (v0.1)
+## Known limitations (v0.2.1)
 
 - **Windows** — deferred to v0.3+. Architecture differs significantly.
 - **iTerm2** — macOS-only and manual QA only in CI (Python lib auth prompt blocks scripted runs).

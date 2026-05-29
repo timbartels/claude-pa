@@ -41,3 +41,6 @@ htmlcov/
 # Local-only dev artifacts
 .env
 .env.local
+
+# Claude Code local machine settings (contains absolute home paths)
+.claude/settings.local.json
