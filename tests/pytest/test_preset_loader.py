@@ -80,9 +80,9 @@ def test_pipe_inside_quoted_value_ok(preset_dir: Path):
 
 
 def test_tim_preset_loads(tmp_path: Path):
-    """Repo's own tim preset must parse cleanly."""
+    """Repo's own obsidian-ce preset must parse cleanly."""
     repo_root = Path(__file__).resolve().parents[2]
-    values = load_preset(repo_root / "presets" / "tim")
+    values = load_preset(repo_root / "presets" / "obsidian-ce")
     assert "PA_VAULT" in values
     assert "PA_PROJECTS_DIR" in values
     assert values["PA_TERMINAL_BACKEND"] == "wezterm"

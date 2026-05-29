@@ -16,7 +16,7 @@ labels: preset
 
 <!-- e.g. obsidian-cli, gh, a specific terminal. -->
 
-## Differences from `presets/tim/`
+## Differences from `presets/obsidian-ce/`
 
 <!-- What does this preset do differently? Different status taxonomy? Different spawn template? Different daily-note shape? -->
 

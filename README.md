@@ -36,8 +36,6 @@ pa init
 
 `pa init` walks you through configuration: terminal backend (auto-detected), preset selection, vault + projects paths, then prints the `~/.claude/settings.json` allow-rules snippet for manual paste. Re-run any time to tweak.
 
-Migrating from a pre-plugin `~/.claude/pa/` install? See [docs/bridge-from-legacy.md](docs/bridge-from-legacy.md) for the symlink + state-file steps.
-
 ## Updating
 
 ```
@@ -78,7 +76,7 @@ The plugin registers an MCP stdio server (`pa.mcp_server`) exposing five tools �
 
 ## Presets
 
-`presets/tim/` ships in v0.2.1 — full Obsidian + Compound Engineering workflow flavor. Pick it at `pa init`, or "start fresh" to answer every question. New presets are welcome via PR — see `presets/README.md`.
+`presets/obsidian-ce/` ships in v0.2.1 — full Obsidian + Compound Engineering workflow flavor. Pick it at `pa init`, or "start fresh" to answer every question. New presets are welcome via PR — see `presets/README.md`.
 
 ## Privacy + data handling
 

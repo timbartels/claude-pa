@@ -33,13 +33,13 @@ touch "$TMP/vault/_templates/Daily Note.md"
 step() { printf '\n=== %s ===\n' "$*"; }
 fail() { printf 'smoke-test FAIL: %s\n' "$*" >&2; exit 1; }
 
-step "1. pa init --non-interactive --preset tim"
-"$REPO_ROOT/bin/pa" init --non-interactive --preset tim \
+step "1. pa init --non-interactive --preset obsidian-ce"
+"$REPO_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
   --set "PA_VAULT=$TMP/vault" \
   --set "PA_PROJECTS_DIR=$TMP/projects" \
   --set "PA_TERMINAL_BACKEND=tmux" >/dev/null
 [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ] || fail "config.sh not written"
-[ "$(cat "$XDG_CONFIG_HOME/claude-pa/preset")" = "tim" ] || fail "preset marker wrong"
+[ "$(cat "$XDG_CONFIG_HOME/claude-pa/preset")" = "obsidian-ce" ] || fail "preset marker wrong"
 
 step "2. pa doctor --json (config now exists)"
 doctor_out=$("$REPO_ROOT/bin/pa" doctor --json || true)

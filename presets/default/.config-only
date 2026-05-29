@@ -6,5 +6,5 @@ README.md that other presets ship are not used in that consumption
 path.
 
 If you want to invoke `pa init --preset default` to install a usable
-skill for a non-Tim Obsidian setup, add those three files. See
-presets/tim/ for the layout.
+skill for a different Obsidian setup, add those three files. See
+presets/obsidian-ce/ for the layout.

@@ -568,7 +568,7 @@ PYEOF
     ;;
 
   snap)
-    # Generic dispatcher requires --project explicitly. The tim preset can
+    # Generic dispatcher requires --project explicitly. The obsidian-ce preset can
     # alias the project name in a wrapper if it wants the prior UX.
     project=""
     name=""

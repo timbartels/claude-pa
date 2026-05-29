@@ -1,6 +1,6 @@
-# tim preset
+# obsidian-ce preset
 
-The author's actual claude-pa configuration. Use it as a starting point if your setup overlaps; tweak via `pa init` afterwards.
+An Obsidian + Compound Engineering example configuration. Use it as a starting point if your setup overlaps; tweak via `pa init` afterwards.
 
 ## Target audience
 

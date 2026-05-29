@@ -24,19 +24,19 @@ teardown() {
   git -C "$PA_ROOT" checkout -- skills/personal-assistant/SKILL.md 2>/dev/null || true
 }
 
-@test "pa init --non-interactive with tim preset writes config + preset marker" {
-  run "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+@test "pa init --non-interactive with obsidian-ce preset writes config + preset marker" {
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux"
   [ "$status" -eq 0 ]
   [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
   [ -f "$XDG_CONFIG_HOME/claude-pa/preset" ]
-  [ "$(cat "$XDG_CONFIG_HOME/claude-pa/preset")" = "tim" ]
+  [ "$(cat "$XDG_CONFIG_HOME/claude-pa/preset")" = "obsidian-ce" ]
 }
 
 @test "pa init writes a config that sources cleanly via lib/paths.sh" {
-  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux" >/dev/null
@@ -48,7 +48,7 @@ teardown() {
 }
 
 @test "pa init --print-settings emits JSON snippet and writes no config" {
-  run "$PA_ROOT/bin/pa" init --print-settings --non-interactive --preset tim \
+  run "$PA_ROOT/bin/pa" init --print-settings --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects"
   [ "$status" -eq 0 ]
@@ -76,7 +76,7 @@ teardown() {
   # The plugin runtime auto-adds <plugin>/bin to the Bash tool's PATH, so
   # the dispatcher allow rule is stable as a bare command. Absolute-path
   # rules would churn on every reinstall + `pa dev on` toggle.
-  run "$PA_ROOT/bin/pa" init --print-settings --non-interactive --preset tim \
+  run "$PA_ROOT/bin/pa" init --print-settings --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects"
   [ "$status" -eq 0 ]
@@ -97,7 +97,7 @@ teardown() {
   # With the validate_assignments funnel in place, --non-interactive
   # mode now rejects $(...) values uniformly with the interactive path.
   # Pre-refactor this slipped through; post-refactor it exits 2.
-  run "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set 'PA_MAIN_TITLE=$(whoami)'
@@ -114,12 +114,12 @@ teardown() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"preset"* ]] && [[ "$output" == *"NOSUCH"* ]]
   [[ "$output" == *"available presets"* ]]
-  [[ "$output" == *"tim"* ]]
+  [[ "$output" == *"obsidian-ce"* ]]
   [[ "$output" == *"default"* ]]
 }
 
 @test "pa init writes config with mode 600" {
-  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux" >/dev/null
@@ -138,14 +138,14 @@ teardown() {
     --set "PA_TERMINAL_BACKEND=tmux"
   [ "$status" -eq 0 ]
   [ -f "$XDG_CONFIG_HOME/claude-pa/config.sh" ]
-  # Default preset's status taxonomy includes in-review (Tim's does too)
+  # Default preset's status taxonomy includes in-review (obsidian-ce's does too)
   grep -q "in-review" "$XDG_CONFIG_HOME/claude-pa/config.sh"
 }
 
 @test "pa init --non-interactive without --set PA_VAULT exits 2 with explicit error" {
   # Use --preset default (which intentionally omits PA_VAULT) so the
-  # required-key check actually fires. tim preset bakes its own
-  # PA_VAULT, so this scenario can't be tested against tim.
+  # required-key check actually fires. obsidian-ce preset bakes its own
+  # PA_VAULT, so this scenario can't be tested against obsidian-ce.
   run "$PA_ROOT/bin/pa" init --non-interactive --preset default \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects"
   [ "$status" -eq 2 ]
@@ -154,7 +154,7 @@ teardown() {
 
 @test "pa init re-run merges existing config: Enter through every field keeps current" {
   # First run: write a baseline config.
-  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux" \
@@ -177,7 +177,7 @@ teardown() {
 }
 
 @test "pa init re-run merges existing config: typed value overrides one field" {
-  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux" \
@@ -195,22 +195,22 @@ teardown() {
 }
 
 @test "pa init --non-interactive on existing config still overwrites without prompts" {
-  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux" >/dev/null
-  run "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  run "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux"
   [ "$status" -eq 0 ]
 }
 
-@test "pa init --wizard --non-interactive with tim preset matches v1 baseline" {
+@test "pa init --wizard --non-interactive with obsidian-ce preset matches v1 baseline" {
   # --wizard wired on top of the existing --non-interactive path. Same
   # result as bare --non-interactive (which now defaults to auto mode
   # but with --set the auto-detect doesn't run for required keys).
-  run "$PA_ROOT/bin/pa" init --wizard --non-interactive --preset tim \
+  run "$PA_ROOT/bin/pa" init --wizard --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux"

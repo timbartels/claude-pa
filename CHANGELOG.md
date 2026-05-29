@@ -74,7 +74,7 @@ First public release. Extracts the personal-assistant daily driver from `~/.clau
 - Five plugin-namespaced slash commands at `commands/`: `morning`, `wrap`, `spawn`, `peek`, `status`.
 - MCP stdio server (`lib/pa/mcp_server.py`) exposing 4 read tools + 1 write tool. Zero runtime deps beyond Python 3.10+ stdlib.
 - `--json` machine-readable output on `pa.sh peek-all`, `pa.sh peek`, `pa.sh status`, `pa doctor`.
-- `presets/tim/` — full Obsidian + Compound Engineering workflow preset (six-stage status taxonomy).
+- `presets/obsidian-ce/` — full Obsidian + Compound Engineering workflow preset (six-stage status taxonomy).
 - `pa.sh resume` — post-crash pane recovery via `claude --continue`.
 - Test infrastructure: 42 pytest tests, 23 bats tests, manifest + preset validators, end-to-end smoke script.
 - CI workflow at `.github/workflows/ci.yml`: lint + python + manifest + bash (macOS + Ubuntu matrix on tmux).

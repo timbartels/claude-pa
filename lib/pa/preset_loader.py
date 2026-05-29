@@ -19,7 +19,7 @@ metacharacters in values.
 Library form::
 
     from pa.preset_loader import load_preset
-    values = load_preset(Path("presets/tim"))
+    values = load_preset(Path("presets/obsidian-ce"))
 """
 
 from __future__ import annotations

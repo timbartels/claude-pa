@@ -107,7 +107,7 @@ PR descriptions follow the project convention: `## Summary` with bullets. No too
 
 ## What not to PR
 
-- Removing the `tim` preset or adding "this is the way" opinions to the generic core. The generic core stays opinion-free; opinions belong in presets.
+- Removing the `obsidian-ce` preset or adding "this is the way" opinions to the generic core. The generic core stays opinion-free; opinions belong in presets.
 - Adding the `mcp` Python package as a runtime dep. The MCP server is stdlib-only by design — keeps the install footprint zero outside the plugin payload.
 - Replacing the strict preset parser (`lib/pa/preset_loader.py`) with `source` for any reason. Presets are a third-party-contributable surface; sourcing them is supply-chain compromise waiting to happen.
 - Telemetry, opt-in metrics, "phone home" features. Vault contents stay local — that's the privacy contract.

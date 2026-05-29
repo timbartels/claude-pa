@@ -17,7 +17,7 @@ teardown() {
 }
 
 _init_clean() {
-  "$PA_ROOT/bin/pa" init --non-interactive --preset tim \
+  "$PA_ROOT/bin/pa" init --non-interactive --preset obsidian-ce \
     --set "PA_VAULT=$TMPHOME/vault" \
     --set "PA_PROJECTS_DIR=$TMPHOME/projects" \
     --set "PA_TERMINAL_BACKEND=tmux" >/dev/null

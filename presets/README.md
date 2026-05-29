@@ -2,7 +2,7 @@
 
 A preset is a pre-filled starting point for the `pa init` wizard. Pick one at install time, then tweak any value.
 
-This directory ships with `tim/` in v0.1. Community presets are welcome via PR.
+This directory ships with `obsidian-ce/` in v0.1. Community presets are welcome via PR.
 
 ## Layout
 
