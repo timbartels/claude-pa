@@ -4,6 +4,20 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and [
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-29
+
+Dashboard reliability + PR-filter follow-ups landed on top of 0.2.0.
+
+### Added
+
+- `PA_WORK_ORGS` env var support — filter PR-status lists in dashboard + morning routine to specific GitHub orgs (e.g. `PA_WORK_ORGS="your-org"`). Defaults empty (no filter). Plumbed via `lib/paths.sh` export so the dashboard Python subprocess sees it.
+
+### Fixed
+
+- Dashboard self-labels its WezTerm tab via OSC 2 escape sequence on every render, stopping `pa.sh focus` from clobbering the dashboard tab title.
+- Dashboard liveness check watches the live `watch` loop process rather than just the pane state — fixes false-positive "dead" reads when a pane exists but its watcher has crashed.
+- Dashboard state glob skips `vault-session-*.json` files so stale vault-session checkpoints don't render as ghost `● ?` project rows.
+
 ## [0.2.0] — 2026-05-22
 
 `pa init` three-mode refactor + four follow-ups + verification bugfixes.
