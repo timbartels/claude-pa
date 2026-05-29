@@ -1,6 +1,6 @@
 ---
 name: personal-assistant
-description: Tim's personal morning and end-of-day assistant for the Obsidian vault (MyVault on iCloud). Auto-activates on greetings ("good morning", "morning", "start my day"), end-of-day phrases ("wrap up", "end of day", "EOD"), status queries ("status on", "how's X going"), and project-spawn requests ("spawn a pane for", "work on X in Y"). Handles daily-note carry-over with gap-aware scanning, PR-status enrichment via gh, project-pane orchestration via wezterm, and end-of-day commit wrap routed through Compound Engineering workflows.
+description: Tim's personal morning and end-of-day assistant for the Obsidian vault. Auto-activates on greetings ("good morning", "morning", "start my day"), end-of-day phrases ("wrap up", "end of day", "EOD"), status queries ("status on", "how's X going"), and project-spawn requests ("spawn a pane for", "work on X in Y"). Handles daily-note carry-over with gap-aware scanning, PR-status enrichment via gh, project-pane orchestration via wezterm, and end-of-day commit wrap routed through Compound Engineering workflows.
 ---
 
 # Personal Assistant — Tim preset

@@ -41,7 +41,7 @@ The six values mean:
 
 After `pa init` loads this preset, walk through the wizard and update at minimum:
 
-- `PA_VAULT` — point at your actual vault root if not the iCloud MyVault path
+- `PA_VAULT` — point at your actual vault root if not the default `$HOME/Documents/MyVault` path
 - `PA_STATUS_VALUES` / `PA_STATUS_SHIPPED` — drop `in-dev` / `in-review` if you don't run a multi-stage rollout
 - `PA_SPAWN_PROMPT_TEMPLATE` — clear it (empty string) if you don't use Compound Engineering, or replace with your preferred slash command
 

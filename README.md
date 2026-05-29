@@ -78,7 +78,7 @@ The plugin registers an MCP stdio server (`pa.mcp_server`) exposing five tools �
 
 ## Presets
 
-`presets/tim/` ships in v0.2.1 — full Obsidian (iCloud MyVault) + Compound Engineering workflow flavor. Pick it at `pa init`, or "start fresh" to answer every question. New presets are welcome via PR — see `presets/README.md`.
+`presets/tim/` ships in v0.2.1 — full Obsidian + Compound Engineering workflow flavor. Pick it at `pa init`, or "start fresh" to answer every question. New presets are welcome via PR — see `presets/README.md`.
 
 ## Privacy + data handling
 
@@ -152,6 +152,12 @@ ruff check lib/ tests/
 ```
 
 CI runs everything on macOS + Ubuntu. See `.github/workflows/ci.yml` and `CONTRIBUTING.md` for details.
+
+## Disclaimer
+
+claude-pa orchestrates an autonomous AI agent (Claude) that can read and write files, run shell commands, send prompts, and act on your behalf across terminal panes. You run it entirely at your own risk.
+
+The author is not responsible or liable for anything the AI does — any commands it runs, output it generates, files it modifies or deletes, data loss, or any other consequence. You alone are responsible for reviewing the agent's actions and for whatever commands you permit it to execute. Provided "as is", without warranty of any kind. See [LICENSE](LICENSE).
 
 ## License
 
