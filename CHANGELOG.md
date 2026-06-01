@@ -4,6 +4,14 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and [
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-06-01
+
+Default behaviour shift in the `personal-assistant` skill for project-scoped task handoff.
+
+### Changed
+
+- **Auto-spawn project panes on handoff.** When a user names a project-scoped task ("work on X in repo Y", "fix Z", any CE workflow targeting a repo), the skill now spawns the project pane automatically via `pa.sh spawn <repo> "<prompt>"` instead of telling the user to switch panes. Previous default ("do NOT spawn a new pane unless the user explicitly asked") flipped — orchestrator-only execution silently polluted context and hid task progress from `pa.sh peek-all`. Documented exceptions for trivial single-line edits, cross-repo summaries, and meta-work on the orchestrator itself.
+
 ## [0.2.1] — 2026-05-29
 
 Dashboard reliability + PR-filter follow-ups landed on top of 0.2.0.

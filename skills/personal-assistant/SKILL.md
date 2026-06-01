@@ -189,9 +189,14 @@ When the user says *"work on X in project Y"*, *"let's tackle the dashboard in <
    - [ ] [[{{PA_FEATURE_NOTE_DIR}}/<project>/<Feature Title>|<Feature Title>]] — <next step>
    ```
 
-5. **Tell the user one line**: `Feature note ready: [[link]]. Switch to <project> pane.`
+5. **Spawn the project pane automatically.** Whenever a task is project-scoped (the user named a repo or the feature note lives under `{{PA_FEATURE_NOTE_DIR}}/<project>/`), spawn the pane immediately — do NOT wait for the user to ask. Use the procedure in **Morning routine step 10** (pre-check existing panes, build initial prompt from feature-note context, `pa.sh spawn <repo> "<prompt>"` or `pa.sh focus` if pane already exists). Tell the user one line afterwards: `Feature note ready: [[link]]. Spawned <repo> pane (id: <pane-id>).`
 
-Do **not** spawn a new pane unless the user explicitly asked.
+   **Exceptions — stay in orchestrator instead of spawning:**
+   - Trivial 1-line edits (changelog bump, single-slug addition, doc tweak) when the user signals "just do it" or context is tiny (≤3 lines, 1 file).
+   - Cross-repo summaries, status checks, vault MOC updates.
+   - Meta-work on the orchestrator or claude-pa configuration itself.
+
+   **Why auto-spawn:** mixing project work into the orchestrator pollutes context, hides task progress from `pa.sh peek-all` / dashboard, and breaks resume. Worktree isolation is the whole point of claude-pa. Tim has flagged this repeatedly; default behaviour is now spawn-first.
 
 ## Status check
 
