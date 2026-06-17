@@ -4,6 +4,14 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and [
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-06-17
+
+State-file hygiene fix for panes that exit without firing `SessionEnd`.
+
+### Fixed
+
+- **Prune ghost state files from dead panes.** Hard-killed panes (`pa.sh kill`/`shutdown`, terminal close, crash, reboot) never fire `SessionEnd`, so their per-repo state JSON was never unlinked and lingered as a phantom "active" row in `peek-all`, the live dashboard, and the todo roll-up. The readers now unlink any state file whose recorded `pane_id` is gone from the live pane list (`peek-all` and the dashboard delete; the todo roll-up skips). Pruning is guarded — it only runs when the live listing is non-empty, so a transient backend outage can't delete every state file, and null-`pane_id` files are kept. `live_pane_ids()` is now backend-aware (tmux `%N` ids vs wezterm numeric) via `PA_TERMINAL_BACKEND` instead of being wezterm-hardcoded.
+
 ## [0.2.2] — 2026-06-01
 
 Default behaviour shift in the `personal-assistant` skill for project-scoped task handoff.
