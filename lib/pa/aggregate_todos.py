@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 
+from pa.dashboard_render import live_pane_ids
 from pa.paths import ConfigError, load_config
 
 STATUS_ORDER = {"in_progress": 0, "pending": 1, "completed": 2}
@@ -27,6 +28,7 @@ def main() -> None:
         print("no state directory yet")
         return
 
+    alive = live_pane_ids()
     rows: list[tuple[str, str, str]] = []
     for f in sorted(state_dir.glob("*.json")):
         # Skip session + dashboard sentinel files — they hold no todo lists.
@@ -35,6 +37,11 @@ def main() -> None:
         try:
             state = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
+            continue
+        # Skip ghost panes (dead pane, state file lingers). Don't roll up their
+        # todos; the dashboard / peek-all readers unlink the file itself.
+        pane_id = str(state.get("pane_id") or "")
+        if alive and pane_id and pane_id not in alive:
             continue
         repo = state.get("repo", f.stem)
         for todo in state.get("todos") or []:
