@@ -896,20 +896,36 @@ def save_prev_mtimes(state_dir: Path, mtimes: dict[str, float]) -> None:
 
 
 def live_pane_ids() -> set[str]:
-    """Return set of currently-alive wezterm pane IDs (as strings)."""
+    """Return the set of currently-alive pane IDs for the active backend.
+
+    Backend-aware: the recorded ``pane_id`` in each state file comes from the
+    backend's own env var (tmux ``%N``, wezterm numeric, etc.), so the live
+    listing must come from the SAME backend or comparisons never match.
+    Returns an empty set on any failure, which callers treat as "don't prune".
+    """
+    backend = os.environ.get("PA_TERMINAL_BACKEND", "wezterm")
     try:
-        out = subprocess.run(
-            ["wezterm", "cli", "list"],
-            capture_output=True, text=True, timeout=2, check=False,
-        ).stdout
+        if backend == "tmux":
+            out = subprocess.run(
+                ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+                capture_output=True, text=True, timeout=2, check=False,
+            ).stdout
+            return {ln.strip() for ln in out.splitlines() if ln.strip()}
+        if backend == "wezterm":
+            out = subprocess.run(
+                ["wezterm", "cli", "list"],
+                capture_output=True, text=True, timeout=2, check=False,
+            ).stdout
+            ids: set[str] = set()
+            for ln in out.splitlines()[1:]:
+                parts = ln.split()
+                if len(parts) >= 3 and parts[2].isdigit():
+                    ids.add(parts[2])
+            return ids
     except (OSError, subprocess.TimeoutExpired):
         return set()
-    ids: set[str] = set()
-    for ln in out.splitlines()[1:]:
-        parts = ln.split()
-        if len(parts) >= 3 and parts[2].isdigit():
-            ids.add(parts[2])
-    return ids
+    # Unknown backend (iterm2/kitty): no cheap listing -> skip pruning.
+    return set()
 
 
 def render(state_dir: Path) -> None:
@@ -934,9 +950,15 @@ def render(state_dir: Path) -> None:
             s = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        # Skip ghost panes: state file present but wezterm pane no longer exists.
+        # Prune ghost panes: state file present but its pane no longer exists
+        # (hard kill / crash / reboot never fires SessionEnd). Delete so it
+        # stops haunting peek-all and the todo roll-up too, not just skip here.
         pane_id = str(s.get("pane_id") or "")
         if alive and pane_id and pane_id not in alive:
+            try:
+                f.unlink()
+            except OSError:
+                pass
             continue
         mtime = f.stat().st_mtime
         repo_key = s.get("repo") or f.stem

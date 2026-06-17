@@ -372,7 +372,12 @@ PYEOF
       fi
       exit 0
     fi
-    python3 - "$PA_STATE_DIR" "$json_mode" <<'PYEOF'
+    # Live pane ids for liveness-pruning of ghost state files (panes killed
+    # hard never fire SessionEnd, so their state JSON lingers forever).
+    # Empty string when the backend listing fails -> pruning is skipped so a
+    # transient backend outage can't nuke every state file.
+    live_panes=$(terminal_list 2>/dev/null | cut -d'|' -f1 | grep -v '^$' | paste -sd, -)
+    python3 - "$PA_STATE_DIR" "$json_mode" "$live_panes" <<'PYEOF'
 import json
 import sys
 from datetime import datetime
@@ -380,6 +385,8 @@ from pathlib import Path
 
 d = Path(sys.argv[1])
 json_mode = sys.argv[2] == "1"
+live_raw = sys.argv[3] if len(sys.argv) > 3 else ""
+live = {p for p in live_raw.split(",") if p}
 states = []
 rows = []
 for f in sorted(d.glob("*.json")):
@@ -388,6 +395,14 @@ for f in sorted(d.glob("*.json")):
     try:
         s = json.loads(f.read_text())
     except (OSError, json.JSONDecodeError):
+        continue
+    # Prune ghosts: pane recorded, backend listing is real, pane is gone.
+    pane = s.get("pane_id")
+    if live and pane and pane not in live:
+        try:
+            f.unlink()
+        except OSError:
+            pass
         continue
     states.append(s)
     last = s.get("last_update", "")
