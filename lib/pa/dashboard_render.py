@@ -680,7 +680,15 @@ def emit(line: str = "") -> None:
 
 
 def flush_frame() -> None:
-    sys.stdout.write("".join(_FRAME_BUF))
+    # Fit the frame to the pane height. The layout is taller than a split pane
+    # on a laptop, so without this the terminal scrolls and the TOP sections
+    # (header, work items, project panes) fall off-screen. Keep the top; drop
+    # the least-critical overflow at the bottom (event-stream tail, footer).
+    height = shutil.get_terminal_size((80, 24)).lines
+    buf = _FRAME_BUF
+    if height > 0 and len(buf) > height:
+        buf = buf[: height - 1]
+    sys.stdout.write("".join(buf))
     sys.stdout.flush()
     _FRAME_BUF.clear()
 
@@ -713,6 +721,18 @@ def _wide_sparkline(values: list[int], slot: int = 3) -> str:
         ch = SPARK_CHARS[idx]
         out.append(pad(ch, slot, align="center"))
     return "".join(out)
+
+
+def ellipsize(s: str, n: int) -> str:
+    """Truncate to n visible chars with a trailing … so cut lines read as
+    intentional rather than chopped mid-word at the pane edge."""
+    if n <= 0:
+        return ""
+    if len(s) <= n:
+        return s
+    if n == 1:
+        return "…"
+    return s[: n - 1].rstrip() + "…"
 
 
 def progress_bar(done: int, total: int, width: int = 12) -> str:
@@ -1175,12 +1195,20 @@ def render(state_dir: Path) -> None:
                 else:
                     mark = color("☐", "caption", dim=True)
                     t_col = "head"
+                prog_visible = (
+                    len(f"  ({prog[0]}/{prog[1]})")
+                    if prog and state != "done"
+                    else 0
+                )
                 prog_str = (
                     color(f"  ({prog[0]}/{prog[1]})", "caption", dim=True)
                     if prog and state != "done"
                     else ""
                 )
-                emit(f"  {mark}  {color(text[: width - 10], t_col)}{prog_str}")
+                # "  " + mark + "  " = 5 visible cols of prefix; reserve the
+                # progress suffix + 1-col safety margin, then ellipsize the rest.
+                avail = width - 5 - prog_visible - 1
+                emit(f"  {mark}  {color(ellipsize(text, avail), t_col)}{prog_str}")
 
     # Attention banner
     blocked = []

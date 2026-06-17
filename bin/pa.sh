@@ -681,7 +681,7 @@ EOF
       echo "could not determine anchor pane" >&2
       exit 1
     fi
-    new_pane=$(wezterm cli split-pane --pane-id "$anchor" --right --percent 35 -- "$PA_BIN/pa.sh" watch "$interval")
+    new_pane=$(wezterm cli split-pane --pane-id "$anchor" --right --percent "${PA_DASH_PERCENT:-35}" -- "$PA_BIN/pa.sh" watch "$interval")
     sleep 0.3
     # No set_title: see the stale-restart branch above. The watch loop
     # self-labels its own pane via OSC 2 without touching the tab title.

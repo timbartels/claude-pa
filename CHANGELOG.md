@@ -6,10 +6,15 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and [
 
 ## [0.2.3] — 2026-06-17
 
-State-file hygiene fix for panes that exit without firing `SessionEnd`.
+State-file hygiene fix for panes that exit without firing `SessionEnd`, plus dashboard layout fixes for narrow/short split panes.
+
+### Added
+
+- **Configurable dashboard width.** The `pa.sh dashboard` split width is now `PA_DASH_PERCENT` (default `35`) instead of hardcoded, so it can be tuned per screen — laptops need a wider split than the old fixed value to avoid truncating rows.
 
 ### Fixed
 
+- **Dashboard fits laptop split panes.** Long task rows now truncate with an ellipsis (`…`) using near-full pane width instead of a hard mid-word cut, and the frame is capped to the pane height so the top sections (header, work items, project panes) no longer scroll off-screen on short panes; the least-critical bottom overflow (event-stream tail, footer) is dropped instead.
 - **Prune ghost state files from dead panes.** Hard-killed panes (`pa.sh kill`/`shutdown`, terminal close, crash, reboot) never fire `SessionEnd`, so their per-repo state JSON was never unlinked and lingered as a phantom "active" row in `peek-all`, the live dashboard, and the todo roll-up. The readers now unlink any state file whose recorded `pane_id` is gone from the live pane list (`peek-all` and the dashboard delete; the todo roll-up skips). Pruning is guarded — it only runs when the live listing is non-empty, so a transient backend outage can't delete every state file, and null-`pane_id` files are kept. `live_pane_ids()` is now backend-aware (tmux `%N` ids vs wezterm numeric) via `PA_TERMINAL_BACKEND` instead of being wezterm-hardcoded.
 
 ## [0.2.2] — 2026-06-01
