@@ -39,6 +39,7 @@ This skill is generic — values in `{{double-braces}}` are substituted at insta
 | `pa.sh todos`                                             | Cross-pane task roll-up, sorted in-progress → pending → completed. |
 | `pa.sh kill <repo>` / `pa.sh restart <repo> [<prompt>]`   | Close or restart a project pane.                               |
 | `pa.sh shutdown`                                          | EOD: save each project pane's buffer to vault, then kill it.   |
+| `pa.sh drift`                                             | Warn when the plugin cache drifted from the marketplace clone.  |
 | `pa.sh pr-status [<org>] <repo:branch>...`                | One line per spec, fed by `gh`.                                |
 | `pa.sh session-touch` / `session-state` / `session-resumable` | Mark + read today's morning checkpoint.                    |
 
@@ -222,7 +223,7 @@ When the user says "wrap up", "end of day", "wrap the day", "EOD", or equivalent
 
 4. **Notes for future-self.** Ask one question: anything to log under `## Notes`? Append answers.
 
-5. **Shut down project panes.** Run `pa.sh shutdown`. Saves each project pane's terminal buffer to `{{PA_VAULT}}/{{PA_FEATURE_NOTE_DIR}}/<repo>/session-logs/<date>-pane-<id>.log`, then kills that pane. Keeps the orchestrator pane (`{{PA_MAIN_TITLE}}`) and the dashboard pane alive.
+5. **Shut down project panes.** Run `pa.sh shutdown`. Saves each project pane's terminal buffer to `{{PA_VAULT}}/{{PA_FEATURE_NOTE_DIR}}/<repo>/session-logs/<date>-pane-<id>.log`, then kills that pane. Keeps the orchestrator pane (`{{PA_MAIN_TITLE}}`) and the dashboard pane alive. Shutdown also rotates a bloated `events.log`, prunes stale session state, and runs `pa.sh drift` — if it warns that the plugin cache drifted from the marketplace clone, surface that to the user (cache hand-edits die on reinstall; they belong in the clone as commits).
 
 6. **Report one line**: `Day wrapped. N commits logged, M tasks open, P panes closed.`
 

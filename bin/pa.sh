@@ -13,6 +13,7 @@
 #   pa.sh tell <pane|repo> <prompt>     # fire-and-forget: submit, don't wait
 #   pa.sh snap --project <name> <screen-name>  # adb screencap → vault project/manual/screenshots/<name>.png
 #   pa.sh shutdown                      # EOD: save each project pane's buffer to vault, close it; keeps main + dashboard
+#   pa.sh drift                         # warn when the plugin cache drifted from the marketplace clone
 #   pa.sh dashboard [interval]          # idempotently spawn (or focus) the live dashboard (wezterm only)
 #   pa.sh watch [interval]              # live dashboard in current pane
 #   pa.sh todos                         # flatten TodoWrite across all panes, prioritized
@@ -741,7 +742,47 @@ EOF
         fi
       done
     fi
+    # Rotate a bloated events.log — it is append-only and grows unbounded
+    # otherwise (2.6 MB observed after ~6 weeks).
+    if [[ -f "$PA_STATE_DIR/events.log" ]]; then
+      size=$(wc -c < "$PA_STATE_DIR/events.log" | tr -d ' ')
+      if (( size > 1048576 )); then
+        gzip -c "$PA_STATE_DIR/events.log" > "$PA_STATE_DIR/events.log.1.gz"
+        : > "$PA_STATE_DIR/events.log"
+        echo "rotated events.log ($((size / 1024)) KB → events.log.1.gz)"
+      fi
+    fi
     echo "shutdown: saved $saved, killed $killed, pruned $pruned stale session state(s)"
+    # Surface plugin-cache drift while it's still recoverable (see `drift`).
+    "$PA_BIN/pa.sh" drift || true
+    ;;
+
+  drift)
+    # Compare the running plugin cache against the marketplace git clone.
+    # Hand-edits made in the cache are regenerated away on plugin reinstall;
+    # this surfaces them while they're still recoverable. Shutdown calls it,
+    # and it can run standalone anytime.
+    clone="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/marketplaces/claude-pa"
+    cache_root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/claude-pa/claude-pa"
+    if [[ ! -d "$clone" || ! -d "$cache_root" ]]; then
+      echo "drift: clone or cache dir missing — skipped"
+      exit 0
+    fi
+    cache=$(/bin/ls -td "$cache_root"/*/ 2>/dev/null | head -n 1)
+    if [[ -z "$cache" ]]; then
+      echo "drift: no cache version dir — skipped"
+      exit 0
+    fi
+    drifted=$(diff -rq "$clone" "$cache" 2>/dev/null \
+      | grep -vE '\.git|__pycache__|\.pyc|\.in_use|\.DS_Store' \
+      | grep '^Files' || true)
+    if [[ -n "$drifted" ]]; then
+      echo "⚠ plugin cache drifted from marketplace clone:"
+      echo "$drifted" | sed -E "s|^Files ${clone}/(.*) and .*|  \1|"
+      echo "→ reconcile + commit in $clone (cache edits die on reinstall)"
+      exit 1
+    fi
+    echo "drift: cache matches clone ✓"
     ;;
 
   watch)

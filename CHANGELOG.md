@@ -4,6 +4,23 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and [
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-07-03
+
+Dashboard freeze fix, cache-drift guard, and EOD state hygiene.
+
+### Fixed
+
+- **Dashboard freeze under slow `git`/`gh`.** `fetch_pane_extras` and `_gh_remote` in `dashboard_render.py` ran `git config`/`git log`/`git rev-parse`/`gh pr list` without timeouts; a slow or rate-limited call blocked the 2s watch loop unbounded and the dashboard appeared frozen whenever project panes were active. All five calls now carry timeouts (git 5s, gh 6s) and degrade to "no extras this tick" on `TimeoutExpired`.
+
+### Added
+
+- **`pa.sh drift`** — compares the running plugin cache against the marketplace git clone and warns when hand-edits drifted (cache edits die on reinstall). `pa.sh shutdown` runs it automatically at EOD.
+- **events.log rotation in shutdown** — the append-only `state/events.log` is gzip-rotated once it exceeds 1 MB.
+
+### Changed
+
+- Synced previously cache-only hand edits into the repo: ghost-pane pruning in `peek-all`/`aggregate_todos`, backend-aware `live_pane_ids()`, dashboard frame height-fit + `ellipsize`, `PA_DASH_PERCENT` dashboard split width.
+
 ## [0.2.2] — 2026-06-01
 
 Default behaviour shift in the `personal-assistant` skill for project-scoped task handoff.
