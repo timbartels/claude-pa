@@ -121,6 +121,7 @@ def fetch_pane_extras(repo: str) -> dict:
         email = subprocess.check_output(
             ["git", "-C", str(repo_path), "config", "user.email"],
             stderr=subprocess.DEVNULL,
+            timeout=5,
         ).decode().strip()
         commits = subprocess.check_output(
             [
@@ -128,15 +129,17 @@ def fetch_pane_extras(repo: str) -> dict:
                 "--since=midnight", f"--author={email}", "--oneline",
             ],
             stderr=subprocess.DEVNULL,
+            timeout=5,
         ).decode().splitlines()
         out["commits_today"] = len(commits)
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
 
     try:
         branch = subprocess.check_output(
             ["git", "-C", str(repo_path), "rev-parse", "--abbrev-ref", "HEAD"],
             stderr=subprocess.DEVNULL,
+            timeout=5,
         ).decode().strip()
         out["branch"] = branch
         # PR for this branch in the repo's GH remote
@@ -150,6 +153,7 @@ def fetch_pane_extras(repo: str) -> dict:
                 "--limit", "1",
             ],
             stderr=subprocess.DEVNULL,
+            timeout=6,
         ).decode()
         prs_data = json.loads(prs or "[]")
         if prs_data:
@@ -167,7 +171,8 @@ def fetch_pane_extras(repo: str) -> dict:
                 out["pr_ci"] = "OK"
             else:
                 out["pr_ci"] = "-"
-    except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError, json.JSONDecodeError):
         pass
     return out
 
@@ -478,6 +483,7 @@ def _gh_remote(repo_path: Path) -> str:
         url = subprocess.check_output(
             ["git", "-C", str(repo_path), "remote", "get-url", "origin"],
             stderr=subprocess.DEVNULL,
+            timeout=5,
         ).decode().strip()
         # Normalize git@github.com:owner/repo(.git) and https://github.com/owner/repo(.git)
         m = re.search(r"[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?$", url)
@@ -680,7 +686,15 @@ def emit(line: str = "") -> None:
 
 
 def flush_frame() -> None:
-    sys.stdout.write("".join(_FRAME_BUF))
+    # Fit the frame to the pane height. The layout is taller than a split pane
+    # on a laptop, so without this the terminal scrolls and the TOP sections
+    # (header, work items, project panes) fall off-screen. Keep the top; drop
+    # the least-critical overflow at the bottom (event-stream tail, footer).
+    height = shutil.get_terminal_size((80, 24)).lines
+    buf = _FRAME_BUF
+    if height > 0 and len(buf) > height:
+        buf = buf[: height - 1]
+    sys.stdout.write("".join(buf))
     sys.stdout.flush()
     _FRAME_BUF.clear()
 
@@ -713,6 +727,18 @@ def _wide_sparkline(values: list[int], slot: int = 3) -> str:
         ch = SPARK_CHARS[idx]
         out.append(pad(ch, slot, align="center"))
     return "".join(out)
+
+
+def ellipsize(s: str, n: int) -> str:
+    """Truncate to n visible chars with a trailing … so cut lines read as
+    intentional rather than chopped mid-word at the pane edge."""
+    if n <= 0:
+        return ""
+    if len(s) <= n:
+        return s
+    if n == 1:
+        return "…"
+    return s[: n - 1].rstrip() + "…"
 
 
 def progress_bar(done: int, total: int, width: int = 12) -> str:
@@ -896,20 +922,36 @@ def save_prev_mtimes(state_dir: Path, mtimes: dict[str, float]) -> None:
 
 
 def live_pane_ids() -> set[str]:
-    """Return set of currently-alive wezterm pane IDs (as strings)."""
+    """Return the set of currently-alive pane IDs for the active backend.
+
+    Backend-aware: the recorded ``pane_id`` in each state file comes from the
+    backend's own env var (tmux ``%N``, wezterm numeric, etc.), so the live
+    listing must come from the SAME backend or comparisons never match.
+    Returns an empty set on any failure, which callers treat as "don't prune".
+    """
+    backend = os.environ.get("PA_TERMINAL_BACKEND", "wezterm")
     try:
-        out = subprocess.run(
-            ["wezterm", "cli", "list"],
-            capture_output=True, text=True, timeout=2, check=False,
-        ).stdout
+        if backend == "tmux":
+            out = subprocess.run(
+                ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+                capture_output=True, text=True, timeout=2, check=False,
+            ).stdout
+            return {ln.strip() for ln in out.splitlines() if ln.strip()}
+        if backend == "wezterm":
+            out = subprocess.run(
+                ["wezterm", "cli", "list"],
+                capture_output=True, text=True, timeout=2, check=False,
+            ).stdout
+            ids: set[str] = set()
+            for ln in out.splitlines()[1:]:
+                parts = ln.split()
+                if len(parts) >= 3 and parts[2].isdigit():
+                    ids.add(parts[2])
+            return ids
     except (OSError, subprocess.TimeoutExpired):
         return set()
-    ids: set[str] = set()
-    for ln in out.splitlines()[1:]:
-        parts = ln.split()
-        if len(parts) >= 3 and parts[2].isdigit():
-            ids.add(parts[2])
-    return ids
+    # Unknown backend (iterm2/kitty): no cheap listing -> skip pruning.
+    return set()
 
 
 def render(state_dir: Path) -> None:
@@ -934,9 +976,15 @@ def render(state_dir: Path) -> None:
             s = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        # Skip ghost panes: state file present but wezterm pane no longer exists.
+        # Prune ghost panes: state file present but its pane no longer exists
+        # (hard kill / crash / reboot never fires SessionEnd). Delete so it
+        # stops haunting peek-all and the todo roll-up too, not just skip here.
         pane_id = str(s.get("pane_id") or "")
         if alive and pane_id and pane_id not in alive:
+            try:
+                f.unlink()
+            except OSError:
+                pass
             continue
         mtime = f.stat().st_mtime
         repo_key = s.get("repo") or f.stem
@@ -1153,12 +1201,20 @@ def render(state_dir: Path) -> None:
                 else:
                     mark = color("☐", "caption", dim=True)
                     t_col = "head"
+                prog_visible = (
+                    len(f"  ({prog[0]}/{prog[1]})")
+                    if prog and state != "done"
+                    else 0
+                )
                 prog_str = (
                     color(f"  ({prog[0]}/{prog[1]})", "caption", dim=True)
                     if prog and state != "done"
                     else ""
                 )
-                emit(f"  {mark}  {color(text[: width - 10], t_col)}{prog_str}")
+                # "  " + mark + "  " = 5 visible cols of prefix; reserve the
+                # progress suffix + 1-col safety margin, then ellipsize the rest.
+                avail = width - 5 - prog_visible - 1
+                emit(f"  {mark}  {color(ellipsize(text, avail), t_col)}{prog_str}")
 
     # Attention banner
     blocked = []

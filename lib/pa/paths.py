@@ -77,6 +77,7 @@ _ALLOWED_KEYS = frozenset(
         "PA_STATUS_SHIPPED",
         "PA_SPAWN_PROMPT_TEMPLATE",
         "PA_DASHBOARD_INTERVAL",
+        "PA_DASH_PERCENT",
         "PA_WORK_ORGS",
         "PA_DEBUG",
     }
