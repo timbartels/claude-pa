@@ -768,11 +768,14 @@ EOF
       echo "drift: clone or cache dir missing — skipped"
       exit 0
     fi
-    cache=$(/bin/ls -td "$cache_root"/*/ 2>/dev/null | head -n 1)
-    if [[ -z "$cache" ]]; then
+    # Highest version dir, not newest mtime — an old version dir kept alive by
+    # a running session (.in_use) can have the fresher mtime.
+    cache_ver=$(/bin/ls "$cache_root" 2>/dev/null | sort -V | tail -n 1)
+    if [[ -z "$cache_ver" ]]; then
       echo "drift: no cache version dir — skipped"
       exit 0
     fi
+    cache="$cache_root/$cache_ver"
     drifted=$(diff -rq "$clone" "$cache" 2>/dev/null \
       | grep -vE '\.git|__pycache__|\.pyc|\.in_use|\.DS_Store' \
       | grep '^Files' || true)
